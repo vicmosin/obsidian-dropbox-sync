@@ -1,0 +1,88 @@
+# Dropbox Vault Sync
+
+Two-way sync between an Obsidian vault and a Dropbox folder, designed for
+**Obsidian on iOS** (also works on Android and desktop). On a Mac you can keep using the
+official Dropbox client; this plugin syncs the same folder from the phone.
+
+## How it stays reliable
+
+| Problem in other sync plugins | What this plugin does |
+| --- | --- |
+| Compares modification times, which iOS and Dropbox change freely → phantom changes, missed edits | Compares **content** using Dropbox's own `content_hash`, computed locally |
+| Re-lists the whole Dropbox folder every time | Uses Dropbox **incremental cursors**: only changes since the last sync are fetched |
+| Can't tell "deleted here" from "created there" | Remembers the last agreed version of every file (**three-way comparison**) |
+| Overwrites the other side's edits | Uploads are **conditional on the revision we saw** (`strict_conflict`); if Dropbox changed meanwhile, the file is retried next sync |
+| Conflicts → errors or lost text | **Both versions are kept**: `Note (conflict iPhone 2026-11-06 0905).md` |
+| A bug or empty vault wipes Dropbox | **Asks before deleting** more than N files and refuses to mirror an empty vault; local deletions go to `.trash` |
+| iOS kills the app mid-sync → broken state | State is checkpointed during the sync and written atomically; an interrupted run just continues |
+| Cyrillic / accented names duplicated or failing | Unicode-normalized (NFC) and case-insensitive matching, ASCII-safe API headers |
+
+Files that are already identical on both sides (e.g. a vault previously downloaded
+by another app) are recognised by content and **not transferred again**.
+
+## Modes
+
+- **Manual** — sync only when you tap the ribbon button or run *Sync now*.
+- **Automatic** — on startup, when you return to the app, a few seconds after you stop
+  editing, and every N minutes.
+
+*Preview sync (dry run)* shows exactly what would be downloaded, uploaded, deleted or
+treated as a conflict, without changing anything. *Show sync log* shows what happened
+(with a Copy button for bug reports).
+
+## Setup
+
+### 1. Create a Dropbox app (one time, ~2 minutes)
+
+1. Open <https://www.dropbox.com/developers/apps> → **Create app**.
+2. Choose **Scoped access** → **Full Dropbox** (so the plugin can reach the folder your
+   Mac already syncs). Name it anything, e.g. `my-obsidian-sync`.
+3. On the **Permissions** tab enable `files.metadata.read`, `files.metadata.write`,
+   `files.content.read`, `files.content.write` and press **Submit**.
+4. On the **Settings** tab, under *OAuth 2 → Redirect URIs*, add
+   `obsidian://dropbox-vault-sync-auth`.
+5. Copy the **App key**. (No app secret is needed: the plugin uses PKCE.)
+
+### 2. Install the plugin on iPhone
+
+Until it is in the community plugin list, install it with
+[BRAT](https://github.com/TfTHacker/obsidian42-brat): *BRAT → Add beta plugin* →
+`vicmosin/obsidian-dropbox-sync`.
+
+### 3. Connect
+
+1. Settings → *Dropbox Vault Sync* → paste the **App key**.
+2. **Connect** (or **Connect with code** if returning to Obsidian does not work).
+3. **Dropbox folder**: the folder holding your vault, as it appears in Dropbox,
+   e.g. `/Obsidian/Diary`.
+4. Run **Preview sync** once to check the plan, then **Sync now**.
+
+## What is synced
+
+Everything in the vault except the patterns in *Excluded paths* (default: `.trash/`,
+`.DS_Store`, temp files). The `.obsidian` folder is **not** synced by default, because a
+phone and a computer usually want different settings and plugins. Per-device files
+(`workspace.json`, `workspace-mobile.json`) and this plugin's own folder (state, tokens,
+log) are never synced.
+
+## Development
+
+```bash
+npm install
+npm test        # unit + scenario tests against an in-memory Dropbox
+npm run build   # main.js
+```
+
+The sync logic is independent of Obsidian:
+
+- `src/sync/plan.ts`: pure three-way decision per file (the table in `decide`)
+- `src/sync/engine.ts`: fetch remote delta → scan vault → plan → execute with checkpoints
+- `src/dropbox/`: Dropbox HTTP API client and PKCE auth
+- `src/obsidian/`: vault adapter, state file, settings and UI
+
+To release, bump `version` in `manifest.json`, `package.json` and `versions.json`,
+then push a tag with the same version. GitHub Actions builds the release that BRAT installs.
+
+## License
+
+MIT
