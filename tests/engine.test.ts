@@ -225,4 +225,49 @@ describe("SyncEngine", () => {
     // b.md is read once for hashing and once for upload; a.md is never read.
     expect(reads.filter((p) => p === "a.md")).toEqual([]);
   });
+
+  it("treats names with non-breaking spaces as the same file after Obsidian rewrites them", async () => {
+    const name = "Archive/Девять граблей, на которые\u00A0я наступил.md";
+    const milgram = "Archive/Милгрэма\u202F— Obedience.md";
+    await remote.put(name, "текст");
+    await remote.put(milgram, "m");
+    await engine.run();
+    // Obsidian stored them with plain spaces.
+    expect(vault.paths()).toEqual(["Archive/Девять граблей, на которые я наступил.md", "Archive/Милгрэма — Obedience.md"]);
+
+    vault.set("Temp.md", "new note");
+    const r = await engine.run();
+    expect(r.actions.map((a) => a.kind)).toEqual(["push"]);
+    expect(r.summary).toMatchObject({ push: 1, deleteRemote: 0, deleteLocal: 0 });
+    expect(remote.paths()).toContain(name);
+  });
+
+  it("updates the existing Dropbox file, keeping its non-breaking-space name", async () => {
+    const name = "Note\u00A0A.md";
+    await remote.put(name, "v1");
+    await engine.run();
+    vault.set("Note A.md", "v2");
+    const r = await engine.run();
+    expect(r.summary.push).toBe(1);
+    expect(r.deferred).toEqual([]);
+    expect(remote.paths()).toEqual([name]);
+    expect(remote.text(name)).toBe("v2");
+  });
+
+  it("migrates state saved with older path keys", async () => {
+    const name = "Note\u00A0B.md";
+    await remote.put(name, "v1");
+    await engine.run();
+    // Simulate state written by a version whose keys kept the NBSP.
+    const old = (k: string) => k.replace("note b.md", "note\u00A0b.md");
+    for (const m of [store.state.remote, store.state.base, store.state.local] as Record<string, unknown>[]) {
+      for (const k of Object.keys(m)) {
+        const v = m[k];
+        delete m[k];
+        m[old(k)] = v;
+      }
+    }
+    const r = await engine.run();
+    expect(r.actions).toEqual([]);
+  });
 });

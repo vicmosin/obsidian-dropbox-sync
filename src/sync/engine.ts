@@ -37,6 +37,19 @@ export interface SyncResult {
   aborted?: string;
 }
 
+/**
+ * Recompute every key from the stored path, so state written by a version
+ * with different key rules (or by hand) still lines up. Last entry wins.
+ */
+function rekey(state: SyncState): SyncState {
+  const fix = <T extends { path: string }>(m: Record<string, T>): Record<string, T> => {
+    const out: Record<string, T> = {};
+    for (const v of Object.values(m)) out[pathKey(v.path)] = v;
+    return out;
+  };
+  return { ...state, remote: fix(state.remote), base: fix(state.base), local: fix(state.local) };
+}
+
 /** Thrown internally when a file changed under us mid-sync. */
 class Deferred extends Error {}
 
@@ -67,7 +80,7 @@ export class SyncEngine {
   private async runInner(run: RunOptions): Promise<SyncResult> {
     const { log, filter } = this.opts;
     const progress = this.opts.onProgress ?? (() => {});
-    const state = await this.store.load();
+    const state = rekey(await this.store.load());
 
     progress("Fetching remote changes…");
     await this.pullRemoteIndex(state);
@@ -249,8 +262,11 @@ export class SyncEngine {
     const data = await this.local.read(path);
     const hash = await dropboxContentHash(data);
     if (hash !== expectedHash) throw new Deferred("local file changed during sync");
-    const rev = state.remote[key]?.rev ?? null;
-    const meta = await this.remote.upload(path, data, rev);
+    // Update the Dropbox file under its own name: the local name can differ
+    // (e.g. Obsidian replaced non-breaking spaces), and uploading under the
+    // local name would create a second file next to it.
+    const existing = state.remote[key];
+    const meta = await this.remote.upload(existing?.path ?? path, data, existing?.rev ?? null);
     if (meta.hash !== hash) throw new Error("Dropbox stored different content than we sent");
     state.remote[key] = meta;
     state.base[key] = { path, hash };
