@@ -5,6 +5,7 @@ import { obsidianHttp } from "./obsidian/http";
 import { ObsidianLocalFs } from "./obsidian/localFs";
 import { AuthModal, ConfirmModal, LogModal, PlanModal } from "./obsidian/modals";
 import { BUILTIN_APP_KEY, DEFAULT_SETTINGS, type Settings } from "./obsidian/settings";
+import { FolderPickerModal } from "./obsidian/folderPicker";
 import { SettingsTab } from "./obsidian/settingsTab";
 import { FileStateStore } from "./obsidian/stateStore";
 import { SyncEngine, type SyncResult } from "./sync/engine";
@@ -167,6 +168,26 @@ export default class SyncedUpPlugin extends Plugin {
       new Notice(`Dropbox sign-in failed: ${errMsg(e)}`);
       this.log(`Sign-in failed: ${errMsg(e)}`);
     }
+  }
+
+  pickRemoteFolder(): void {
+    new FolderPickerModal(this.app, this.client(), this.settings.remoteRoot, (path) => {
+      void (async () => {
+        await this.setRemoteRoot(path);
+        this.settingsTab?.display();
+        new Notice(`Dropbox folder: ${path || "/"}`);
+      })();
+    }).open();
+  }
+
+  /** Changing the folder invalidates everything we know about the remote side. */
+  async setRemoteRoot(value: string): Promise<void> {
+    let next = value.trim().replace(/\/+$/, "");
+    if (next && !next.startsWith("/")) next = `/${next}`;
+    if (next === this.settings.remoteRoot) return;
+    this.settings.remoteRoot = next;
+    await this.saveSettings();
+    await this.resetState(false);
   }
 
   async disconnect(): Promise<void> {

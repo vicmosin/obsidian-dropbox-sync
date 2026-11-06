@@ -9,6 +9,14 @@ const CONTENT = "https://content.dropboxapi.com/2";
 const SINGLE_UPLOAD_LIMIT = 32 * 1024 * 1024;
 const CHUNK = 8 * 1024 * 1024;
 
+export interface FolderListing {
+  /** "" for the Dropbox root */
+  path: string;
+  folders: { name: string; path: string }[];
+  /** The folder contains .obsidian, so it is probably a vault. */
+  isVault: boolean;
+}
+
 export class DropboxApiError extends Error {
   constructor(public readonly status: number, public readonly summary: string, endpoint: string) {
     super(`Dropbox ${endpoint} failed (${status}): ${summary}`);
@@ -101,6 +109,32 @@ export class DropboxClient implements RemoteFs {
       }
       throw e;
     }
+  }
+
+  /**
+   * Immediate subfolders of an absolute Dropbox path ("" = root), for the
+   * folder picker. Independent of the configured sync root.
+   */
+  async listFolder(absPath: string): Promise<FolderListing> {
+    const path = absPath === "/" ? "" : absPath.replace(/\/+$/, "");
+    const folders: { name: string; path: string }[] = [];
+    let isVault = false;
+    let page = (await this.rpc("files/list_folder", { path, recursive: false, include_deleted: false, limit: 2000 })) as {
+      entries: (DbxEntry & { name: string })[];
+      cursor: string;
+      has_more: boolean;
+    };
+    for (;;) {
+      for (const e of page.entries) {
+        if (e[".tag"] !== "folder") continue;
+        if (e.name === ".obsidian") isVault = true;
+        else folders.push({ name: e.name, path: e.path_display ?? `${path}/${e.name}` });
+      }
+      if (!page.has_more) break;
+      page = (await this.rpc("files/list_folder/continue", { cursor: page.cursor })) as typeof page;
+    }
+    folders.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    return { path, folders, isVault };
   }
 
   async currentAccount(): Promise<{ name: string; email: string }> {

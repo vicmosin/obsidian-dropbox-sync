@@ -35,12 +35,15 @@ export class SettingsTab extends PluginSettingTab {
       .setDesc("The Dropbox folder that holds this vault, e.g. /Obsidian/Diary. Changing it resets sync state.")
       .addText((t) =>
         t.setPlaceholder("/Obsidian/MyVault").setValue(s.remoteRoot).onChange(async (v) => {
-          const next = v.trim();
-          if (next === s.remoteRoot) return;
-          s.remoteRoot = next;
-          await this.plugin.saveSettings();
-          await this.plugin.resetState(false);
+          await this.plugin.setRemoteRoot(v);
         }),
+      )
+      .addButton((b) =>
+        b
+          .setButtonText("Choose…")
+          .setDisabled(!connected)
+          .setTooltip(connected ? "Browse your Dropbox" : "Connect to Dropbox first")
+          .onClick(() => this.plugin.pickRemoteFolder()),
       );
 
     new Setting(containerEl).setName("When to sync").setHeading();

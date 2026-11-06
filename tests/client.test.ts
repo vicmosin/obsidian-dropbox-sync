@@ -116,4 +116,40 @@ describe("DropboxClient", () => {
     await c.listChanges(null);
     expect(log[1]!.url).toContain("create_folder_v2");
   });
+
+  it("lists subfolders for the picker, paging and spotting vaults", async () => {
+    const log: HttpRequest[] = [];
+    const c = client(
+      [
+        res(200, {
+          entries: [
+            { ".tag": "folder", name: "Zebra", path_display: "/Notes/Zebra" },
+            { ".tag": "file", name: "a.md", path_display: "/Notes/a.md" },
+            { ".tag": "folder", name: ".obsidian", path_display: "/Notes/.obsidian" },
+          ],
+          cursor: "c1",
+          has_more: true,
+        }),
+        res(200, { entries: [{ ".tag": "folder", name: "дневник", path_display: "/Notes/дневник" }], cursor: "c2", has_more: false }),
+      ],
+      log,
+    );
+    const l = await c.listFolder("/Notes/");
+    expect(l).toEqual({
+      path: "/Notes",
+      isVault: true,
+      folders: [
+        { name: "Zebra", path: "/Notes/Zebra" },
+        { name: "дневник", path: "/Notes/дневник" },
+      ],
+    });
+    expect(JSON.parse(log[0]!.body as string)).toMatchObject({ path: "/Notes", recursive: false });
+  });
+
+  it("lists the Dropbox root with an empty path", async () => {
+    const log: HttpRequest[] = [];
+    const c = client([res(200, { entries: [], cursor: "c", has_more: false })], log);
+    await c.listFolder("/");
+    expect(JSON.parse(log[0]!.body as string).path).toBe("");
+  });
 });
