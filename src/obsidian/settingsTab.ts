@@ -1,8 +1,8 @@
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
-import type DropboxSyncPlugin from "../main";
+import type SyncedUpPlugin from "../main";
 
 export class SettingsTab extends PluginSettingTab {
-  constructor(app: App, private readonly plugin: DropboxSyncPlugin) {
+  constructor(app: App, private readonly plugin: SyncedUpPlugin) {
     super(app, plugin);
   }
 
@@ -12,16 +12,6 @@ export class SettingsTab extends PluginSettingTab {
     containerEl.empty();
 
     new Setting(containerEl).setName("Dropbox").setHeading();
-
-    new Setting(containerEl)
-      .setName("Dropbox app key")
-      .setDesc("From your app at dropbox.com/developers/apps. See the README for setup.")
-      .addText((t) =>
-        t.setPlaceholder("abc123…").setValue(s.appKey).onChange(async (v) => {
-          s.appKey = v.trim();
-          await this.plugin.saveSettings();
-        }),
-      );
 
     const connected = !!s.tokens;
     const account = new Setting(containerEl)
@@ -145,6 +135,21 @@ export class SettingsTab extends PluginSettingTab {
         b.setButtonText("Reset").onClick(async () => {
           await this.plugin.resetState(true);
           new Notice("Sync state reset");
+        }),
+      );
+
+    new Setting(containerEl).setName("Advanced").setHeading();
+
+    new Setting(containerEl)
+      .setName("Custom Dropbox app key")
+      .setDesc("Leave empty to use the built-in Synced Up app. Changing it disconnects Dropbox.")
+      .addText((t) =>
+        t.setPlaceholder("built-in").setValue(s.appKey).onChange(async (v) => {
+          const next = v.trim();
+          if (next === s.appKey) return;
+          s.appKey = next;
+          if (s.tokens) await this.plugin.disconnect();
+          else await this.plugin.saveSettings();
         }),
       );
   }

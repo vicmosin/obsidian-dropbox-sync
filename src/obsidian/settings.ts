@@ -3,7 +3,15 @@ import type { Tokens } from "../dropbox/auth";
 
 export type SyncMode = "auto" | "manual";
 
+/**
+ * App key of the public "Synced Up" Dropbox app. It is an identifier, not a
+ * secret: sign-in uses PKCE, so no app secret exists in the plugin, and only
+ * the person who signs in can grant access to their Dropbox.
+ */
+export const BUILTIN_APP_KEY = "y5zectn7a6juslx";
+
 export interface Settings {
+  /** Custom Dropbox app key; empty = use BUILTIN_APP_KEY. */
   appKey: string;
   /** Dropbox folder mirrored to this vault, e.g. "/Obsidian/Diary". */
   remoteRoot: string;

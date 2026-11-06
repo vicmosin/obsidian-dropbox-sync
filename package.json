@@ -1,5 +1,5 @@
 {
-  "name": "dropbox-vault-sync",
+  "name": "synced-up",
   "version": "0.1.0",
   "description": "Reliable two-way Dropbox sync for Obsidian (built for iOS).",
   "main": "main.js",

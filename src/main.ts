@@ -1,10 +1,10 @@
 import { debounce, Notice, Platform, Plugin, type ObsidianProtocolData } from "obsidian";
-import { authorizeUrl, createPkce, exchangeCode } from "./dropbox/auth";
+import { AUTH_ACTION, authorizeUrl, createPkce, exchangeCode } from "./dropbox/auth";
 import { DropboxClient } from "./dropbox/client";
 import { obsidianHttp } from "./obsidian/http";
 import { ObsidianLocalFs } from "./obsidian/localFs";
 import { CodeModal, ConfirmModal, LogModal, PlanModal } from "./obsidian/modals";
-import { DEFAULT_SETTINGS, type Settings } from "./obsidian/settings";
+import { BUILTIN_APP_KEY, DEFAULT_SETTINGS, type Settings } from "./obsidian/settings";
 import { SettingsTab } from "./obsidian/settingsTab";
 import { FileStateStore } from "./obsidian/stateStore";
 import { SyncEngine, type SyncResult } from "./sync/engine";
@@ -15,7 +15,7 @@ const MAX_LOG_LINES = 1000;
 /** Don't auto-sync more often than this (resume + edit events can pile up). */
 const MIN_AUTO_GAP_MS = 20_000;
 
-export default class DropboxSyncPlugin extends Plugin {
+export default class SyncedUpPlugin extends Plugin {
   settings!: Settings;
   private engine: SyncEngine | null = null;
   private store!: FileStateStore;
@@ -27,6 +27,10 @@ export default class DropboxSyncPlugin extends Plugin {
   private lastAutoSync = 0;
   private editDebounce: (() => void) | null = null;
   private retryTimer: number | null = null;
+
+  private get appKey(): string {
+    return this.settings.appKey || BUILTIN_APP_KEY;
+  }
 
   private get pluginDir(): string {
     return this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
@@ -46,7 +50,7 @@ export default class DropboxSyncPlugin extends Plugin {
 
     this.addSettingTab(new SettingsTab(this.app, this));
 
-    this.registerObsidianProtocolHandler("dropbox-vault-sync-auth", (p) => void this.finishAuth(p));
+    this.registerObsidianProtocolHandler(AUTH_ACTION, (p) => void this.finishAuth(p));
 
     // Automatic triggers. Each checks the mode itself, so switching modes needs no re-registration.
     this.app.workspace.onLayoutReady(() => {
@@ -102,13 +106,9 @@ export default class DropboxSyncPlugin extends Plugin {
   // ---- auth -------------------------------------------------------------
 
   async startAuth(redirect: boolean): Promise<void> {
-    if (!this.settings.appKey) {
-      new Notice("Enter your Dropbox app key first.");
-      return;
-    }
     const { verifier, challenge } = await createPkce();
     this.pendingAuth = { verifier, redirect };
-    window.open(authorizeUrl(this.settings.appKey, challenge, redirect));
+    window.open(authorizeUrl(this.appKey, challenge, redirect));
     if (!redirect) new CodeModal(this.app, (code) => void this.completeAuth(code)).open();
   }
 
@@ -127,7 +127,7 @@ export default class DropboxSyncPlugin extends Plugin {
       return;
     }
     try {
-      this.settings.tokens = await exchangeCode(obsidianHttp, this.settings.appKey, code, pending.verifier, pending.redirect);
+      this.settings.tokens = await exchangeCode(obsidianHttp, this.appKey, code, pending.verifier, pending.redirect);
       this.pendingAuth = null;
       const account = await this.client().currentAccount();
       this.settings.accountName = `${account.name} (${account.email})`;
@@ -157,7 +157,7 @@ export default class DropboxSyncPlugin extends Plugin {
   private client(): DropboxClient {
     return new DropboxClient({
       http: obsidianHttp,
-      appKey: this.settings.appKey,
+      appKey: this.appKey,
       root: this.settings.remoteRoot,
       getTokens: () => this.settings.tokens,
       saveTokens: async (t) => {
@@ -288,7 +288,7 @@ export default class DropboxSyncPlugin extends Plugin {
     const line = `${new Date().toISOString()} ${msg}`;
     this.logLines.push(line);
     if (this.logLines.length > MAX_LOG_LINES) this.logLines.splice(0, this.logLines.length - MAX_LOG_LINES);
-    console.debug(`[dropbox-sync] ${msg}`);
+    console.debug(`[synced-up] ${msg}`);
   }
 
   private async flushLog(): Promise<void> {
