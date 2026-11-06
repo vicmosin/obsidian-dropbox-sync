@@ -26,8 +26,10 @@ export class ObsidianLocalFs implements LocalFs {
     return out;
   }
 
+  // Existing files are addressed by their exact name: Obsidian's normalizePath
+  // turns non-breaking spaces into plain ones, which would point elsewhere.
   read(path: string): Promise<ArrayBuffer> {
-    return this.adapter.readBinary(obsidianNormalize(path));
+    return this.adapter.readBinary(exact(path));
   }
 
   async write(path: string, data: ArrayBuffer): Promise<LocalStat> {
@@ -40,7 +42,7 @@ export class ObsidianLocalFs implements LocalFs {
   }
 
   async remove(path: string): Promise<void> {
-    const p = obsidianNormalize(path);
+    const p = exact(path);
     if (!(await this.adapter.exists(p))) return;
     // Into the vault's .trash folder, never a hard delete.
     await this.adapter.trashLocal(p);
@@ -49,11 +51,11 @@ export class ObsidianLocalFs implements LocalFs {
   async rename(from: string, to: string): Promise<void> {
     const t = obsidianNormalize(to);
     await this.ensureParent(t);
-    await this.adapter.rename(obsidianNormalize(from), t);
+    await this.adapter.rename(exact(from), t);
   }
 
   async stat(path: string): Promise<LocalStat | null> {
-    const st = await this.adapter.stat(obsidianNormalize(path));
+    const st = await this.adapter.stat(exact(path));
     return st?.type === "file" ? { path, mtime: st.mtime, size: st.size } : null;
   }
 
@@ -65,4 +67,9 @@ export class ObsidianLocalFs implements LocalFs {
       if (!(await this.adapter.exists(cur))) await this.adapter.mkdir(cur);
     }
   }
+}
+
+/** Slash cleanup only; keeps every other character of the name as is. */
+function exact(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/^\/|\/$/g, "");
 }
