@@ -183,8 +183,8 @@ export default class SyncedUpPlugin extends Plugin {
           return;
         }
         this.settingsTab?.display();
-        this.log(`Dropbox folder set to ${path || "/"}`);
-        new Notice(`Dropbox folder: ${path || "/"}. Checking what needs to sync…`);
+        this.log(`Dropbox folder set to ${path}`);
+        new Notice(`Dropbox folder: ${path}. Checking what needs to sync…`);
         // Show the plan right away, so it is clear what happens next.
         await this.preview();
       })();
@@ -193,7 +193,9 @@ export default class SyncedUpPlugin extends Plugin {
 
   /** Changing the folder invalidates everything we know about the remote side. */
   async setRemoteRoot(value: string): Promise<void> {
-    let next = value.trim().replace(/\/+$/, "");
+    const trimmed = value.trim();
+    // "/" is an explicit choice of the Dropbox root; "" means not chosen yet.
+    let next = trimmed === "/" ? "/" : trimmed.replace(/\/+$/, "");
     if (next && !next.startsWith("/")) next = `/${next}`;
     if (next === this.settings.remoteRoot) return;
     this.settings.remoteRoot = next;
@@ -255,6 +257,11 @@ export default class SyncedUpPlugin extends Plugin {
       if (trigger === "manual") new Notice("Connect to Dropbox in the plugin settings first.");
       return false;
     }
+    if (!this.settings.remoteRoot) {
+      // An empty folder would mean "the whole Dropbox": never do that by accident.
+      if (trigger === "manual") new Notice("Choose the Dropbox folder in the plugin settings first.");
+      return false;
+    }
     return true;
   }
 
@@ -299,6 +306,7 @@ export default class SyncedUpPlugin extends Plugin {
     }
     this.ribbonEl?.addClass("is-syncing");
     if (trigger === "manual") this.showProgress("Syncing…");
+    this.settingsTab?.refreshStatus();
     this.log(`--- ${trigger} sync started`);
     let result: SyncResult;
     try {
@@ -306,6 +314,7 @@ export default class SyncedUpPlugin extends Plugin {
     } catch (e) {
       this.log(`Sync failed: ${errMsg(e)}`);
       this.setStatus("Dropbox: failed");
+      this.recordOutcome(`failed: ${errMsg(e)}`, false);
       if (trigger === "manual" || !isOffline(e)) new Notice(`Dropbox sync failed: ${errMsg(e)}`);
       return;
     } finally {
@@ -319,6 +328,7 @@ export default class SyncedUpPlugin extends Plugin {
   private report(trigger: Trigger, r: SyncResult): void {
     if (r.aborted) {
       this.log(`Aborted: ${r.aborted}`);
+      this.recordOutcome("paused, waiting for your confirmation", false);
       this.setStatus("Dropbox: waiting for confirmation");
       new ConfirmModal(
         this.app,
@@ -330,8 +340,6 @@ export default class SyncedUpPlugin extends Plugin {
       ).open();
       return;
     }
-    this.settings.lastSync = Date.now();
-    void this.saveData(this.settings);
     const s = r.summary;
     const parts = [
       s.pull && `${s.pull}↓`,
@@ -342,6 +350,7 @@ export default class SyncedUpPlugin extends Plugin {
     const text = parts.length ? parts.join(", ") : "up to date";
     this.setStatus(`Dropbox: ${r.errors.length ? `${r.errors.length} errors` : text}`);
     this.log(`Done: ${text}; errors ${r.errors.length}, deferred ${r.deferred.length}`);
+    this.recordOutcome(r.errors.length ? `${text}; ${r.errors.length} file(s) failed` : text, true);
 
     if (r.errors.length) {
       new Notice(`Dropbox: ${r.errors.length} file(s) failed. See “Show sync log”.\n${r.errors[0]!.path}: ${r.errors[0]!.message}`, 10_000);
@@ -350,6 +359,21 @@ export default class SyncedUpPlugin extends Plugin {
     } else if (trigger === "manual") {
       new Notice(`Dropbox: ${text}`);
     }
+  }
+
+  /** One line for the settings screen: when we last synced and how it went. */
+  statusLine(): string {
+    if (this.engine?.isRunning) return "Syncing now…";
+    const s = this.settings;
+    if (!s.lastSync) return "Not synced yet.";
+    return `Last sync ${timeAgo(s.lastSync)}: ${s.lastSyncSummary || "done"}.`;
+  }
+
+  private recordOutcome(summary: string, completed: boolean): void {
+    if (completed) this.settings.lastSync = Date.now();
+    this.settings.lastSyncSummary = summary;
+    void this.saveData(this.settings);
+    this.settingsTab?.refreshStatus();
   }
 
   // ---- log / status -----------------------------------------------------

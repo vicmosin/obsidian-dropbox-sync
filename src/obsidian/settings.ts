@@ -27,6 +27,8 @@ export interface Settings {
   tokens: Tokens | null;
   accountName: string;
   lastSync: number;
+  /** Human-readable outcome of the last sync, shown in settings. */
+  lastSyncSummary: string;
 }
 
 function defaultDeviceLabel(): string {
@@ -49,4 +51,5 @@ export const DEFAULT_SETTINGS: Settings = {
   tokens: null,
   accountName: "",
   lastSync: 0,
+  lastSyncSummary: "",
 };

@@ -26,7 +26,11 @@ by another app) are recognised by content and **not transferred again**.
 - **Automatic** — on startup, when you return to the app, a few seconds after you stop
   editing, and every N minutes.
 
-*Preview sync (dry run)* shows exactly what would be downloaded, uploaded, deleted or
+You can start a sync from the **Sync** row at the top of the plugin settings, the
+ribbon button (on iPhone: swipe right from the left edge, or tap the menu button), or the
+command palette (*Synced Up: Sync now*).
+
+*Preview* (*Preview sync (dry run)* in the command palette) shows exactly what would be downloaded, uploaded, deleted or
 treated as a conflict, without changing anything. *Show sync log* shows what happened
 (with a Copy button for bug reports).
 
