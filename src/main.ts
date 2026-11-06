@@ -9,12 +9,14 @@ import { FolderPickerModal } from "./obsidian/folderPicker";
 import { SettingsTab } from "./obsidian/settingsTab";
 import { FileStateStore } from "./obsidian/stateStore";
 import { SyncEngine, type SyncResult } from "./sync/engine";
-import { PathFilter } from "./sync/paths";
+import { normalizeRoot, PathFilter } from "./sync/paths";
 
 type Trigger = "manual" | "auto";
 const MAX_LOG_LINES = 1000;
 /** Don't auto-sync more often than this (resume + edit events can pile up). */
 const MIN_AUTO_GAP_MS = 20_000;
+/** Follow-up syncs in a row before waiting for the next normal trigger. */
+const MAX_FOLLOW_UPS = 3;
 
 export default class SyncedUpPlugin extends Plugin {
   settings!: Settings;
@@ -36,6 +38,13 @@ export default class SyncedUpPlugin extends Plugin {
   private lastAutoSync = 0;
   private editDebounce: (() => void) | null = null;
   private retryTimer: number | null = null;
+  /**
+   * The sync or preview in progress. One at a time for the whole plugin: the
+   * engine is rebuilt whenever settings change, so its own flag is not enough.
+   */
+  private current: Promise<void> | null = null;
+  /** The vault changed while a sync was running: sync again afterwards. */
+  private changedDuringRun = false;
 
   private get appKey(): string {
     return this.settings.appKey || BUILTIN_APP_KEY;
@@ -87,8 +96,11 @@ export default class SyncedUpPlugin extends Plugin {
       if (document.visibilityState === "visible" && this.isAuto() && this.settings.syncOnStartup) void this.sync("auto");
     });
     const onEdit = () => {
-      if (!this.isAuto() || this.engine?.isRunning || !this.settings.syncAfterEditSeconds) return;
-      this.editDebounce?.();
+      if (!this.isAuto() || !this.settings.syncAfterEditSeconds) return;
+      // Our own writes during a sync land here too; any real edit made
+      // meanwhile is picked up by the follow-up sync after this one.
+      if (this.current) this.changedDuringRun = true;
+      else this.editDebounce?.();
     };
     this.registerEvent(this.app.vault.on("modify", onEdit));
     this.registerEvent(this.app.vault.on("create", onEdit));
@@ -108,7 +120,7 @@ export default class SyncedUpPlugin extends Plugin {
         if (this.headerButtons.has(view)) return;
         const el = view.addAction("refresh-cw", "Sync with Dropbox", () => void this.sync("manual"));
         el.addClass("synced-up-header-action");
-        if (this.engine?.isRunning) el.addClass("is-syncing");
+        if (this.current) el.addClass("is-syncing");
         this.headerButtons.set(view, el);
       });
     }
@@ -239,11 +251,11 @@ export default class SyncedUpPlugin extends Plugin {
 
   /** Changing the folder invalidates everything we know about the remote side. */
   async setRemoteRoot(value: string): Promise<void> {
-    const trimmed = value.trim();
     // "/" is an explicit choice of the Dropbox root; "" means not chosen yet.
-    let next = trimmed === "/" ? "/" : trimmed.replace(/\/+$/, "");
-    if (next && !next.startsWith("/")) next = `/${next}`;
+    const next = normalizeRoot(value);
     if (next === this.settings.remoteRoot) return;
+    // Let a running sync finish first, so it cannot save over the reset.
+    await this.whenIdle();
     this.settings.remoteRoot = next;
     await this.saveSettings();
     await this.resetState(false);
@@ -286,6 +298,7 @@ export default class SyncedUpPlugin extends Plugin {
     if (!s.syncConfigDir) patterns.push(`${cfg}/`);
     const filter = new PathFilter(patterns);
     this.engine = new SyncEngine(new ObsidianLocalFs(this.app.vault.adapter, (p) => filter.excluded(p)), this.client(), this.store, {
+      root: s.remoteRoot,
       filter,
       deviceLabel: s.deviceLabel,
       maxDeletes: s.maxDeletes,
@@ -311,15 +324,39 @@ export default class SyncedUpPlugin extends Plugin {
     return true;
   }
 
+  private async whenIdle(): Promise<void> {
+    while (this.current) await this.current.catch(() => {});
+  }
+
+  /** Runs `job` unless another sync or preview is in progress. */
+  private async exclusive(trigger: Trigger, job: () => Promise<void>): Promise<void> {
+    if (this.current) {
+      if (trigger === "manual") new Notice("Sync is already running.");
+      return;
+    }
+    const run = job();
+    this.current = run;
+    try {
+      await run;
+    } finally {
+      this.current = null;
+    }
+  }
+
   async preview(): Promise<void> {
     if (!this.ready("manual")) return;
+    await this.exclusive("manual", () => this.runPreview());
+  }
+
+  private async runPreview(): Promise<void> {
     const engine = this.getEngine();
-    if (engine.isRunning) return void new Notice("Sync is already running.");
     this.showProgress("Comparing your vault with Dropbox…");
     try {
       const r = await engine.run({ dryRun: true });
       this.hideProgress();
-      new PlanModal(this.app, r.actions, () => void this.sync("manual", true)).open();
+      // A fresh run, with the usual safety checks: Dropbox may have changed
+      // while the preview was open.
+      new PlanModal(this.app, r.actions, () => void this.sync("manual")).open();
     } catch (e) {
       new Notice(`Dropbox preview failed: ${errMsg(e)}`);
       this.log(`Preview failed: ${errMsg(e)}`);
@@ -331,8 +368,7 @@ export default class SyncedUpPlugin extends Plugin {
 
   async sync(trigger: Trigger, allowMassDelete = false): Promise<void> {
     if (!this.ready(trigger)) return;
-    const engine = this.getEngine();
-    if (engine.isRunning) {
+    if (this.current) {
       if (trigger === "manual") new Notice("Sync is already running.");
       return;
     }
@@ -350,6 +386,30 @@ export default class SyncedUpPlugin extends Plugin {
       }
       this.lastAutoSync = Date.now();
     }
+    await this.exclusive(trigger, () => this.runSync(trigger, allowMassDelete));
+    this.followUpIfNeeded();
+  }
+
+  private lastDeferred = 0;
+  /** Consecutive follow-up syncs; capped so a file deferred every time cannot loop forever. */
+  private followUps = 0;
+
+  /** In automatic mode, sync again for edits made (or files deferred) during the last run. */
+  private followUpIfNeeded(): void {
+    const again = this.changedDuringRun || this.lastDeferred > 0;
+    this.changedDuringRun = false;
+    this.lastDeferred = 0;
+    this.followUps = again ? this.followUps + 1 : 0;
+    if (!again || !this.isAuto() || this.retryTimer !== null || this.followUps > MAX_FOLLOW_UPS) return;
+    const delay = Math.max(MIN_AUTO_GAP_MS, this.settings.syncAfterEditSeconds * 1000);
+    this.retryTimer = window.setTimeout(() => {
+      this.retryTimer = null;
+      void this.sync("auto");
+    }, delay);
+  }
+
+  private async runSync(trigger: Trigger, allowMassDelete: boolean): Promise<void> {
+    const engine = this.getEngine();
     this.setSpinning(true);
     if (trigger === "manual") this.showProgress("Syncing…");
     this.settingsTab?.refreshStatus();
@@ -368,6 +428,7 @@ export default class SyncedUpPlugin extends Plugin {
       this.hideProgress();
       await this.flushLog();
     }
+    this.lastDeferred = result.deferred.length;
     this.report(trigger, result);
   }
 
@@ -409,7 +470,7 @@ export default class SyncedUpPlugin extends Plugin {
 
   /** One line for the settings screen: when we last synced and how it went. */
   statusLine(): string {
-    if (this.engine?.isRunning) return "Syncing now…";
+    if (this.current) return "Syncing now…";
     const s = this.settings;
     if (!s.lastSync) return "Not synced yet.";
     return `Last sync ${timeAgo(s.lastSync)}: ${s.lastSyncSummary || "done"}.`;

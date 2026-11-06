@@ -37,11 +37,12 @@ export class SettingsTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Dropbox folder")
       .setDesc("The Dropbox folder that holds this vault, e.g. /Obsidian/Diary. Changing it resets sync state.")
-      .addText((t) =>
-        t.setPlaceholder("/Obsidian/MyVault").setValue(s.remoteRoot).onChange(async (v) => {
-          await this.plugin.setRemoteRoot(v);
-        }),
-      )
+      .addText((t) => {
+        t.setPlaceholder("/Obsidian/MyVault").setValue(s.remoteRoot);
+        // Save when editing is finished, not on every keystroke: a half-typed
+        // path must never become the sync folder.
+        t.inputEl.addEventListener("change", () => void this.plugin.setRemoteRoot(t.getValue()));
+      })
       .addButton((b) =>
         b
           .setButtonText("Choose…")
