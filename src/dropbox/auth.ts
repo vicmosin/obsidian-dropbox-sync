@@ -8,7 +8,9 @@ export interface Tokens {
   accountId?: string;
 }
 
-export const REDIRECT_URI = "obsidian://dropbox-vault-sync-auth";
+/** Obsidian protocol action; must match the redirect URI registered with Dropbox. */
+export const AUTH_ACTION = "synced-up-auth";
+export const REDIRECT_URI = `obsidian://${AUTH_ACTION}`;
 
 function base64url(bytes: Uint8Array): string {
   let s = "";
