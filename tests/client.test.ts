@@ -1,0 +1,119 @@
+import { describe, expect, it } from "vitest";
+import { DropboxClient } from "../src/dropbox/client";
+import type { HttpRequest, HttpResponse } from "../src/dropbox/http";
+import { RemoteConflictError } from "../src/sync/types";
+import { buf } from "./fakes";
+
+function res(status: number, body: unknown, headers: Record<string, string> = {}): HttpResponse {
+  const text = typeof body === "string" ? body : JSON.stringify(body);
+  return { status, headers, text, arrayBuffer: buf(text) };
+}
+
+function client(responses: HttpResponse[], log: HttpRequest[] = []) {
+  let tokens = { accessToken: "old", refreshToken: "r", expiresAt: Date.now() + 3_600_000 };
+  return new DropboxClient({
+    appKey: "key",
+    root: "/Obsidian/Diary",
+    http: async (req) => {
+      log.push(req);
+      const r = responses.shift();
+      if (!r) throw new Error(`unexpected request ${req.url}`);
+      return r;
+    },
+    getTokens: () => tokens,
+    saveTokens: async (t) => void (tokens = t),
+    sleep: async () => {},
+  });
+}
+
+describe("DropboxClient", () => {
+  it("escapes non-ASCII paths in Dropbox-API-Arg", async () => {
+    const log: HttpRequest[] = [];
+    const meta = { ".tag": "file", path_display: "/Obsidian/Diary/Дневник.md", content_hash: "h", rev: "1", size: 1 };
+    const c = client([res(200, "x", { "Dropbox-API-Result": JSON.stringify(meta) })], log);
+    const { meta: m } = await c.download("Дневник.md");
+    expect(m.path).toBe("Дневник.md");
+    const arg = log[0]!.headers!["Dropbox-API-Arg"]!;
+    expect(/^[\x00-\x7f]*$/.test(arg)).toBe(true);
+    expect(JSON.parse(arg).path).toBe("/Obsidian/Diary/Дневник.md");
+  });
+
+  it("maps list_folder entries to vault-relative changes", async () => {
+    const c = client([
+      res(200, {
+        entries: [
+          { ".tag": "folder", path_display: "/Obsidian/Diary" },
+          { ".tag": "file", path_display: "/Obsidian/Diary/a.md", content_hash: "h", rev: "1", size: 3 },
+          { ".tag": "deleted", path_display: "/Obsidian/Diary/old" },
+        ],
+        cursor: "c1",
+        has_more: false,
+      }),
+    ]);
+    const r = await c.listChanges(null);
+    expect(r.reset).toBe(true);
+    expect(r.changes).toEqual([
+      { type: "file", path: "a.md", hash: "h", rev: "1", size: 3 },
+      { type: "deleted", path: "old" },
+    ]);
+  });
+
+  it("falls back to a full listing when the cursor is reset", async () => {
+    const c = client([
+      res(409, { error_summary: "reset/..." }),
+      res(200, { entries: [], cursor: "fresh", has_more: false }),
+    ]);
+    const r = await c.listChanges("stale");
+    expect(r).toMatchObject({ reset: true, cursor: "fresh" });
+  });
+
+  it("refreshes an expired token once and retries", async () => {
+    const log: HttpRequest[] = [];
+    const c = client(
+      [
+        res(401, { error_summary: "expired_access_token/" }),
+        res(200, { access_token: "new", expires_in: 14400 }),
+        res(200, { entries: [], cursor: "c", has_more: false }),
+      ],
+      log,
+    );
+    await c.listChanges(null);
+    expect(log[2]!.headers!.Authorization).toBe("Bearer new");
+  });
+
+  it("retries rate limits and server errors", async () => {
+    const c = client([
+      res(429, "too many", { "Retry-After": "1" }),
+      res(503, "unavailable"),
+      res(200, { entries: [], cursor: "c", has_more: false }),
+    ]);
+    await expect(c.listChanges(null)).resolves.toMatchObject({ cursor: "c" });
+  });
+
+  it("turns upload conflicts into RemoteConflictError and sends strict update mode", async () => {
+    const log: HttpRequest[] = [];
+    const c = client([res(409, { error_summary: "path/conflict/file/.." })], log);
+    await expect(c.upload("a.md", buf("x"), "rev1")).rejects.toBeInstanceOf(RemoteConflictError);
+    const arg = JSON.parse(log[0]!.headers!["Dropbox-API-Arg"]!);
+    expect(arg).toMatchObject({ mode: { ".tag": "update", update: "rev1" }, strict_conflict: true, autorename: false });
+  });
+
+  it("treats deleting an already-deleted file as success", async () => {
+    const c = client([res(409, { error_summary: "path_lookup/not_found/" })]);
+    await expect(c.delete("a.md", "r")).resolves.toBeUndefined();
+  });
+
+  it("creates the sync folder when it does not exist yet", async () => {
+    const log: HttpRequest[] = [];
+    const c = client(
+      [
+        res(409, { error_summary: "path/not_found/" }),
+        res(200, {}),
+        res(200, { entries: [], cursor: "c", has_more: false }),
+      ],
+      log,
+    );
+    await c.listChanges(null);
+    expect(log[1]!.url).toContain("create_folder_v2");
+  });
+});
