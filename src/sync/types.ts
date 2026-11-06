@@ -54,6 +54,12 @@ export interface LocalFs {
 
 export interface SyncState {
   version: 1;
+  /**
+   * The Dropbox folder this state belongs to. State for another folder is
+   * ignored, so a stale save can never be applied to a newly chosen folder.
+   * Missing in state written by older versions.
+   */
+  root?: string;
   cursor: string | null;
   /** Remote index maintained from Dropbox deltas, by key. */
   remote: Record<string, RemoteMeta>;
@@ -63,8 +69,8 @@ export interface SyncState {
   local: Record<string, { path: string; mtime: number; size: number; hash: string }>;
 }
 
-export function emptyState(): SyncState {
-  return { version: 1, cursor: null, remote: {}, base: {}, local: {} };
+export function emptyState(root?: string): SyncState {
+  return { version: 1, root, cursor: null, remote: {}, base: {}, local: {} };
 }
 
 export interface StateStore {
