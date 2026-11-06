@@ -3,7 +3,7 @@ import { AUTH_ACTION, authorizeUrl, createPkce, exchangeCode } from "./dropbox/a
 import { DropboxClient } from "./dropbox/client";
 import { obsidianHttp } from "./obsidian/http";
 import { ObsidianLocalFs } from "./obsidian/localFs";
-import { CodeModal, ConfirmModal, LogModal, PlanModal } from "./obsidian/modals";
+import { AuthModal, ConfirmModal, LogModal, PlanModal } from "./obsidian/modals";
 import { BUILTIN_APP_KEY, DEFAULT_SETTINGS, type Settings } from "./obsidian/settings";
 import { SettingsTab } from "./obsidian/settingsTab";
 import { FileStateStore } from "./obsidian/stateStore";
@@ -24,6 +24,10 @@ export default class SyncedUpPlugin extends Plugin {
   private ribbonEl: HTMLElement | null = null;
   private intervalId: number | null = null;
   private pendingAuth: { verifier: string; redirect: boolean } | null = null;
+  /** Prepared ahead of time: iOS only opens a browser synchronously from a tap. */
+  private pkce: { verifier: string; challenge: string } | null = null;
+  private authModal: AuthModal | null = null;
+  private settingsTab: SettingsTab | null = null;
   private lastAutoSync = 0;
   private editDebounce: (() => void) | null = null;
   private retryTimer: number | null = null;
@@ -38,6 +42,7 @@ export default class SyncedUpPlugin extends Plugin {
 
   async onload(): Promise<void> {
     await this.loadSettings();
+    void this.preparePkce();
     this.store = new FileStateStore(this.app.vault.adapter, `${this.pluginDir}/sync-state.json`);
 
     this.ribbonEl = this.addRibbonIcon("refresh-cw", "Sync with Dropbox", () => void this.sync("manual"));
@@ -48,7 +53,8 @@ export default class SyncedUpPlugin extends Plugin {
     this.addCommand({ id: "preview", name: "Preview sync (dry run)", callback: () => void this.preview() });
     this.addCommand({ id: "show-log", name: "Show sync log", callback: () => new LogModal(this.app, this.logLines).open() });
 
-    this.addSettingTab(new SettingsTab(this.app, this));
+    this.settingsTab = new SettingsTab(this.app, this);
+    this.addSettingTab(this.settingsTab);
 
     this.registerObsidianProtocolHandler(AUTH_ACTION, (p) => void this.finishAuth(p));
 
@@ -105,11 +111,29 @@ export default class SyncedUpPlugin extends Plugin {
 
   // ---- auth -------------------------------------------------------------
 
-  async startAuth(redirect: boolean): Promise<void> {
-    const { verifier, challenge } = await createPkce();
-    this.pendingAuth = { verifier, redirect };
-    window.open(authorizeUrl(this.appKey, challenge, redirect));
-    if (!redirect) new CodeModal(this.app, (code) => void this.completeAuth(code)).open();
+  private async preparePkce(): Promise<void> {
+    try {
+      this.pkce = await createPkce();
+    } catch (e) {
+      this.log(`Could not prepare sign-in: ${errMsg(e)}`);
+    }
+  }
+
+  /** Must stay synchronous: it runs inside the button tap. */
+  startAuth(redirect: boolean): void {
+    const pkce = this.pkce;
+    if (!pkce) {
+      new Notice("Preparing Dropbox sign-in, tap again in a moment.");
+      void this.preparePkce();
+      return;
+    }
+    this.pendingAuth = { verifier: pkce.verifier, redirect };
+    const url = authorizeUrl(this.appKey, pkce.challenge, redirect);
+    this.log(`Sign-in started (${redirect ? "redirect" : "code"})`);
+    this.authModal?.close();
+    this.authModal = new AuthModal(this.app, url, redirect ? null : (code) => void this.completeAuth(code));
+    this.authModal.open();
+    window.open(url);
   }
 
   private async finishAuth(params: ObsidianProtocolData): Promise<void> {
@@ -126,12 +150,17 @@ export default class SyncedUpPlugin extends Plugin {
       new Notice("Dropbox: no sign-in in progress. Start again from settings.");
       return;
     }
+    this.authModal?.close();
+    this.authModal = null;
     try {
       this.settings.tokens = await exchangeCode(obsidianHttp, this.appKey, code, pending.verifier, pending.redirect);
       this.pendingAuth = null;
+      this.pkce = null;
+      void this.preparePkce();
       const account = await this.client().currentAccount();
       this.settings.accountName = `${account.name} (${account.email})`;
       await this.saveSettings();
+      this.settingsTab?.display();
       new Notice(`Connected to Dropbox as ${account.name}`);
       this.log(`Connected as ${account.email}`);
     } catch (e) {
