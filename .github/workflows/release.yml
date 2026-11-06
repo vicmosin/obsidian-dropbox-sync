@@ -1,22 +1,59 @@
 name: Release
+
+# Publishes a GitHub release (used by BRAT) whenever main carries a
+# manifest.json version that has no release yet. To release: bump the version
+# in manifest.json, package.json and versions.json, and merge.
 on:
   push:
-    tags: ["*"]
+    branches: [main]
+  workflow_dispatch:
+
 permissions:
   contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Read version
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(jq -r .version manifest.json)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if gh release view "$version" >/dev/null 2>&1; then
+            echo "Release $version already exists; nothing to do."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Check versions agree
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          v=${{ steps.version.outputs.version }}
+          test "$(jq -r .version package.json)" = "$v" || { echo "package.json version differs from manifest.json"; exit 1; }
+          jq -e --arg v "$v" 'has($v)' versions.json >/dev/null || { echo "versions.json has no entry for $v"; exit 1; }
       - uses: actions/setup-node@v4
+        if: steps.version.outputs.exists == 'false'
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - run: npm test
-      - run: npm run build
+      - if: steps.version.outputs.exists == 'false'
+        run: npm ci
+      - if: steps.version.outputs.exists == 'false'
+        run: npm test
+      - if: steps.version.outputs.exists == 'false'
+        run: npm run build
       - name: Create release
+        if: steps.version.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" main.js manifest.json styles.css --title "$GITHUB_REF_NAME" --generate-notes
+        run: |
+          gh release create "${{ steps.version.outputs.version }}" main.js manifest.json styles.css \
+            --target "$GITHUB_SHA" --title "${{ steps.version.outputs.version }}" --generate-notes

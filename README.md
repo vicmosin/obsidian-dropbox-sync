@@ -79,8 +79,8 @@ The sync logic is independent of Obsidian:
 - `src/dropbox/`: Dropbox HTTP API client and PKCE auth
 - `src/obsidian/`: vault adapter, state file, settings and UI
 
-To release, bump `version` in `manifest.json`, `package.json` and `versions.json`,
-then push a tag with the same version. GitHub Actions builds the release that BRAT installs.
+To release, bump `version` in `manifest.json`, `package.json` and `versions.json`
+and merge to `main`. GitHub Actions then builds and publishes the release that BRAT installs.
 
 ## Disclaimer
 
