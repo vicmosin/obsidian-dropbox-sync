@@ -270,4 +270,44 @@ describe("SyncEngine", () => {
     const r = await engine.run();
     expect(r.actions).toEqual([]);
   });
+
+  it("leaves names that collide only by space type alone instead of deleting in Dropbox", async () => {
+    await remote.put("Note A.md", "a");
+    await engine.run();
+    vault.set("Note\u00A0A.md", "copy from Files app"); // same key as "Note A.md"
+    const r = await engine.run();
+    expect(r.actions).toEqual([]);
+    expect(remote.paths()).toEqual(["Note A.md"]);
+    expect(logs.some((l) => l.includes("Not syncing"))).toBe(true);
+  });
+
+  it("ignores state saved for another Dropbox folder", async () => {
+    const forA = makeEngine({ root: "/A" });
+    await remote.put("a.md", "a");
+    await forA.run();
+    expect(store.state.root).toBe("/A");
+
+    // A stale save for /A must not leak into /B (e.g. a sync that was still running).
+    const otherRemote = new FakeDropbox();
+    await otherRemote.put("b.md", "b");
+    const forB = new SyncEngine(vault, otherRemote, store, {
+      root: "/B",
+      filter: new PathFilter([]),
+      deviceLabel: "iPhone",
+      maxDeletes: 10,
+      log: (m) => logs.push(m),
+    });
+    const r = await forB.run({ dryRun: true });
+    // Fresh state: a.md is only local (push), b.md only remote (pull); nothing is deleted.
+    expect(r.summary).toMatchObject({ push: 1, pull: 1, deleteLocal: 0, deleteRemote: 0 });
+  });
+
+  it("adopts state written before it remembered its folder", async () => {
+    await remote.put("a.md", "a");
+    await engine.run();
+    delete store.state.root;
+    const r = await makeEngine({ root: "/A" }).run();
+    expect(r.actions).toEqual([]);
+    expect(store.state.root).toBe("/A");
+  });
 });
