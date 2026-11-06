@@ -29,13 +29,24 @@
   border-radius: var(--radius-m);
 }
 .synced-up-picker-row {
-  padding: 0.6em 0.8em;
-  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.4em 0.8em;
+  min-height: 2.6em;
   border-bottom: 1px solid var(--background-modifier-border);
+}
+.synced-up-picker-name {
+  flex: 1;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0.3em 0;
 }
 .synced-up-picker-row:last-child {
   border-bottom: none;
 }
-.synced-up-picker-row:hover {
+.synced-up-picker-name:hover {
   background: var(--background-modifier-hover);
 }

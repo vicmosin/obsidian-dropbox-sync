@@ -29,6 +29,8 @@ export default class SyncedUpPlugin extends Plugin {
   private pkce: { verifier: string; challenge: string } | null = null;
   private authModal: AuthModal | null = null;
   private settingsTab: SettingsTab | null = null;
+  /** Visible progress for manual runs: mobile has no status bar. */
+  private progressNotice: Notice | null = null;
   private lastAutoSync = 0;
   private editDebounce: (() => void) | null = null;
   private retryTimer: number | null = null;
@@ -173,9 +175,18 @@ export default class SyncedUpPlugin extends Plugin {
   pickRemoteFolder(): void {
     new FolderPickerModal(this.app, this.client(), this.settings.remoteRoot, (path) => {
       void (async () => {
-        await this.setRemoteRoot(path);
+        try {
+          await this.setRemoteRoot(path);
+        } catch (e) {
+          new Notice(`Could not save the Dropbox folder: ${errMsg(e)}`);
+          this.log(`Saving folder failed: ${errMsg(e)}`);
+          return;
+        }
         this.settingsTab?.display();
-        new Notice(`Dropbox folder: ${path || "/"}`);
+        this.log(`Dropbox folder set to ${path || "/"}`);
+        new Notice(`Dropbox folder: ${path || "/"}. Checking what needs to sync…`);
+        // Show the plan right away, so it is clear what happens next.
+        await this.preview();
       })();
     }).open();
   }
@@ -231,7 +242,10 @@ export default class SyncedUpPlugin extends Plugin {
       deviceLabel: s.deviceLabel,
       maxDeletes: s.maxDeletes,
       log: (m) => this.log(m),
-      onProgress: (m) => this.setStatus(`Dropbox: ${m}`),
+      onProgress: (m) => {
+        this.setStatus(`Dropbox: ${m}`);
+        this.progressNotice?.setMessage(`Synced Up: ${m}`);
+      },
     });
     return this.engine;
   }
@@ -248,12 +262,16 @@ export default class SyncedUpPlugin extends Plugin {
     if (!this.ready("manual")) return;
     const engine = this.getEngine();
     if (engine.isRunning) return void new Notice("Sync is already running.");
+    this.showProgress("Comparing your vault with Dropbox…");
     try {
       const r = await engine.run({ dryRun: true });
+      this.hideProgress();
       new PlanModal(this.app, r.actions, () => void this.sync("manual", true)).open();
     } catch (e) {
       new Notice(`Dropbox preview failed: ${errMsg(e)}`);
+      this.log(`Preview failed: ${errMsg(e)}`);
     } finally {
+      this.hideProgress();
       this.setStatus("Dropbox: idle");
     }
   }
@@ -280,6 +298,7 @@ export default class SyncedUpPlugin extends Plugin {
       this.lastAutoSync = Date.now();
     }
     this.ribbonEl?.addClass("is-syncing");
+    if (trigger === "manual") this.showProgress("Syncing…");
     this.log(`--- ${trigger} sync started`);
     let result: SyncResult;
     try {
@@ -291,6 +310,7 @@ export default class SyncedUpPlugin extends Plugin {
       return;
     } finally {
       this.ribbonEl?.removeClass("is-syncing");
+      this.hideProgress();
       await this.flushLog();
     }
     this.report(trigger, result);
@@ -347,6 +367,16 @@ export default class SyncedUpPlugin extends Plugin {
     } catch {
       /* logging must never break sync */
     }
+  }
+
+  private showProgress(text: string): void {
+    this.hideProgress();
+    this.progressNotice = new Notice(`Synced Up: ${text}`, 0);
+  }
+
+  private hideProgress(): void {
+    this.progressNotice?.hide();
+    this.progressNotice = null;
   }
 
   private setStatus(text: string): void {
