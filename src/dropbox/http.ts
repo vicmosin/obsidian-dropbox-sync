@@ -11,7 +11,8 @@ export interface HttpResponse {
   status: number;
   headers: Record<string, string>;
   arrayBuffer: ArrayBuffer;
-  text: string;
+  /** Decoded on access only: file downloads never need it. */
+  readonly text: string;
 }
 
 export type HttpFn = (req: HttpRequest) => Promise<HttpResponse>;

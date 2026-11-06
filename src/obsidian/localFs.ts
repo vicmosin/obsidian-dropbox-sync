@@ -1,4 +1,5 @@
 import { normalizePath as obsidianNormalize, type DataAdapter } from "obsidian";
+import { cleanSlashes as exact } from "../sync/paths";
 import type { LocalFs, LocalStat } from "../sync/types";
 
 /**
@@ -67,9 +68,4 @@ export class ObsidianLocalFs implements LocalFs {
       if (!(await this.adapter.exists(cur))) await this.adapter.mkdir(cur);
     }
   }
-}
-
-/** Slash cleanup only; keeps every other character of the name as is. */
-function exact(path: string): string {
-  return path.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/^\/|\/$/g, "");
 }

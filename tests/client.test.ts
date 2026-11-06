@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DropboxClient } from "../src/dropbox/client";
+import { DropboxApiError, DropboxClient, RemoteFolderMissingError } from "../src/dropbox/client";
 import type { HttpRequest, HttpResponse } from "../src/dropbox/http";
 import { RemoteConflictError } from "../src/sync/types";
 import { buf } from "./fakes";
@@ -103,18 +103,27 @@ describe("DropboxClient", () => {
     await expect(c.delete("a.md", "r")).resolves.toBeUndefined();
   });
 
-  it("creates the sync folder when it does not exist yet", async () => {
+  it("never creates a missing sync folder, it reports it", async () => {
     const log: HttpRequest[] = [];
-    const c = client(
-      [
-        res(409, { error_summary: "path/not_found/" }),
-        res(200, {}),
-        res(200, { entries: [], cursor: "c", has_more: false }),
-      ],
-      log,
-    );
-    await c.listChanges(null);
-    expect(log[1]!.url).toContain("create_folder_v2");
+    const c = client([res(409, { error_summary: "path/not_found/" })], log);
+    await expect(c.listChanges(null)).rejects.toBeInstanceOf(RemoteFolderMissingError);
+    expect(log.map((r) => r.url).some((u) => u.includes("create_folder"))).toBe(false);
+  });
+
+  it("creates a folder only when asked", async () => {
+    const log: HttpRequest[] = [];
+    const c = client([res(200, { metadata: { path_display: "/Obsidian/New" } })], log);
+    expect(await c.createFolder("/Obsidian/New/")).toBe("/Obsidian/New");
+    expect(JSON.parse(log[0]!.body as string)).toMatchObject({ path: "/Obsidian/New", autorename: false });
+  });
+
+  it("defers deletes Dropbox asks to retry, and surfaces other delete errors", async () => {
+    const busy = client([res(409, { error_summary: "too_many_write_operations/" })]);
+    await expect(busy.delete("a.md", "r")).rejects.toBeInstanceOf(RemoteConflictError);
+    const changed = client([res(409, { error_summary: "path_write/conflict/file/" })]);
+    await expect(changed.delete("a.md", "r")).rejects.toBeInstanceOf(RemoteConflictError);
+    const restricted = client([res(409, { error_summary: "path_lookup/restricted_content/" })]);
+    await expect(restricted.delete("a.md", "r")).rejects.toBeInstanceOf(DropboxApiError);
   });
 
   it("lists subfolders for the picker, paging and spotting vaults", async () => {

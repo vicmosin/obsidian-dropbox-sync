@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { conflictPath, fromRemotePath, pathKey, PathFilter, toRemotePath } from "../src/sync/paths";
+import { conflictPath, fromRemotePath, normalizeRoot, pathKey, PathFilter, toRemotePath } from "../src/sync/paths";
 
 describe("paths", () => {
   it("treats NFD and NFC Cyrillic names as the same file", () => {
@@ -27,5 +27,12 @@ describe("paths", () => {
     expect(f.excluded("deep/x.tmp")).toBe(true);
     expect(f.excluded("sub/.DS_Store")).toBe(true);
     expect(f.excluded("notes/today.md")).toBe(false);
+  });
+  it("normalizes the Dropbox folder setting", () => {
+    expect(normalizeRoot("")).toBe("");
+    expect(normalizeRoot("  ")).toBe("");
+    expect(normalizeRoot("/")).toBe("/");
+    expect(normalizeRoot("Obsidian/Diary/")).toBe("/Obsidian/Diary");
+    expect(normalizeRoot("//Obsidian//Diary")).toBe("/Obsidian/Diary");
   });
 });

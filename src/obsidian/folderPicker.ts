@@ -3,6 +3,7 @@ import type { FolderListing } from "../dropbox/client";
 
 export interface FolderSource {
   listFolder(absPath: string): Promise<FolderListing>;
+  createFolder(absPath: string): Promise<string>;
 }
 
 /** Browse Dropbox folders and pick the one that holds the vault. */
@@ -76,10 +77,34 @@ export class FolderPickerModal extends Modal {
       this.row(list, `📁  ${f.name}`, () => void this.show(f.path), () => this.pick(f.path));
     }
 
+    this.renderNewFolder(listing.path);
+
     const name = listing.path ? listing.path.slice(listing.path.lastIndexOf("/") + 1) : "Dropbox root";
     new Setting(contentEl)
       .addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()))
       .addButton((b) => b.setButtonText(`Select “${name}”`).setCta().onClick(() => this.pick(listing.path || "/")));
+  }
+
+  /** Folders are only ever created here, explicitly; sync never creates its root. */
+  private renderNewFolder(parent: string): void {
+    let name = "";
+    const setting = new Setting(this.contentEl)
+      .setName("New folder here")
+      .addText((t) => t.setPlaceholder("Folder name").onChange((v) => (name = v)))
+      .addButton((b) =>
+        b.setButtonText("Create").onClick(async () => {
+          const clean = name.trim().replace(/[\\/]/g, "");
+          if (!clean) return;
+          b.setDisabled(true);
+          try {
+            const created = await this.source.createFolder(`${parent}/${clean}`);
+            await this.show(created);
+          } catch (e) {
+            b.setDisabled(false);
+            setting.setDesc(`Could not create folder: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }),
+      );
   }
 
   private pick(path: string): void {

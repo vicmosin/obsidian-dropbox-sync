@@ -1,4 +1,4 @@
-import { fromRemotePath, toRemotePath } from "../sync/paths";
+import { fromRemotePath, normalizeRoot, toRemotePath } from "../sync/paths";
 import { RemoteConflictError, type RemoteChange, type RemoteChanges, type RemoteFs, type RemoteMeta } from "../sync/types";
 import { refreshTokens, type Tokens } from "./auth";
 import { header, headerSafeJson, type HttpFn, type HttpRequest, type HttpResponse } from "./http";
@@ -15,6 +15,18 @@ export interface FolderListing {
   folders: { name: string; path: string }[];
   /** The folder contains .obsidian, so it is probably a vault. */
   isVault: boolean;
+}
+
+/** The configured sync folder does not exist in Dropbox. */
+export class RemoteFolderMissingError extends Error {
+  constructor(public readonly folder: string) {
+    super(`The Dropbox folder ${folder} does not exist. Choose an existing folder in the plugin settings.`);
+  }
+}
+
+/** Dropbox asks us to try again later (rate or concurrency limits on writes). */
+function isTransientWriteError(summary: string): boolean {
+  return /too_many_write_operations|in_progress/.test(summary);
 }
 
 export class DropboxApiError extends Error {
@@ -92,7 +104,7 @@ export class DropboxClient implements RemoteFs {
       }
       return await this.uploadSession(commit, data);
     } catch (e) {
-      if (e instanceof DropboxApiError && e.status === 409 && e.summary.includes("conflict")) {
+      if (e instanceof DropboxApiError && e.status === 409 && (e.summary.includes("conflict") || isTransientWriteError(e.summary))) {
         throw new RemoteConflictError(path, e.summary);
       }
       throw e;
@@ -105,8 +117,10 @@ export class DropboxClient implements RemoteFs {
     } catch (e) {
       if (e instanceof DropboxApiError && e.status === 409) {
         if (e.summary.includes("not_found")) return; // already gone
-        throw new RemoteConflictError(path, e.summary);
+        // Changed since we listed it, or Dropbox is busy: retry next sync.
+        if (e.summary.includes("conflict") || isTransientWriteError(e.summary)) throw new RemoteConflictError(path, e.summary);
       }
+      // Anything else (restricted content, malformed path, …) is a real error the user must see.
       throw e;
     }
   }
@@ -116,7 +130,7 @@ export class DropboxClient implements RemoteFs {
    * folder picker. Independent of the configured sync root.
    */
   async listFolder(absPath: string): Promise<FolderListing> {
-    const path = absPath === "/" ? "" : absPath.replace(/\/+$/, "");
+    const path = rootToApiPath(absPath);
     const folders: { name: string; path: string }[] = [];
     let isVault = false;
     let page = (await this.rpc("files/list_folder", { path, recursive: false, include_deleted: false, limit: 2000 })) as {
@@ -137,6 +151,14 @@ export class DropboxClient implements RemoteFs {
     return { path, folders, isVault };
   }
 
+  /** Create a folder at an absolute Dropbox path; returns its display path. */
+  async createFolder(absPath: string): Promise<string> {
+    const j = (await this.rpc("files/create_folder_v2", { path: rootToApiPath(absPath), autorename: false })) as {
+      metadata: { path_display: string };
+    };
+    return j.metadata.path_display;
+  }
+
   async currentAccount(): Promise<{ name: string; email: string }> {
     const j = (await this.rpc("users/get_current_account", null)) as { name: { display_name: string }; email: string };
     return { name: j.name.display_name, email: j.email };
@@ -150,9 +172,10 @@ export class DropboxClient implements RemoteFs {
     try {
       return this.toChanges(await this.rpc("files/list_folder", arg), true);
     } catch (e) {
+      // Never create it: a typo would silently become a new folder holding a
+      // full copy of the vault. Folders are created explicitly in the picker.
       if (root && e instanceof DropboxApiError && e.summary.startsWith("path/not_found")) {
-        await this.rpc("files/create_folder_v2", { path: root, autorename: false });
-        return this.toChanges(await this.rpc("files/list_folder", arg), true);
+        throw new RemoteFolderMissingError(root);
       }
       throw e;
     }
@@ -194,8 +217,7 @@ export class DropboxClient implements RemoteFs {
   }
 
   private rootArg(): string {
-    const r = toRemotePath(this.o.root, "x");
-    return r === "/x" ? "" : r.slice(0, -2);
+    return rootToApiPath(this.o.root);
   }
 
   private remotePath(rel: string): string {
@@ -267,6 +289,12 @@ export class DropboxClient implements RemoteFs {
     }
     return t.accessToken;
   }
+}
+
+/** Dropbox API spelling of a folder: "" for the root, "/A/B" otherwise. */
+function rootToApiPath(root: string): string {
+  const r = normalizeRoot(root);
+  return r === "/" ? "" : r;
 }
 
 function backoff(attempt: number): number {
