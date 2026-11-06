@@ -1,6 +1,6 @@
-# Dropbox Vault Sync
+# Synced Up
 
-Two-way sync between an Obsidian vault and a Dropbox folder, designed for
+Reliable two-way sync between an Obsidian vault and a Dropbox folder, designed for
 **Obsidian on iOS** (also works on Android and desktop). On a Mac you can keep using the
 official Dropbox client; this plugin syncs the same folder from the phone.
 
@@ -32,30 +32,29 @@ treated as a conflict, without changing anything. *Show sync log* shows what hap
 
 ## Setup
 
-### 1. Create a Dropbox app (one time, ~2 minutes)
-
-1. Open <https://www.dropbox.com/developers/apps> → **Create app**.
-2. Choose **Scoped access** → **Full Dropbox** (so the plugin can reach the folder your
-   Mac already syncs). Name it anything, e.g. `my-obsidian-sync`.
-3. On the **Permissions** tab enable `files.metadata.read`, `files.metadata.write`,
-   `files.content.read`, `files.content.write` and press **Submit**.
-4. On the **Settings** tab, under *OAuth 2 → Redirect URIs*, add
-   `obsidian://dropbox-vault-sync-auth`.
-5. Copy the **App key**. (No app secret is needed: the plugin uses PKCE.)
-
-### 2. Install the plugin on iPhone
-
-Until it is in the community plugin list, install it with
-[BRAT](https://github.com/TfTHacker/obsidian42-brat): *BRAT → Add beta plugin* →
-`vicmosin/obsidian-dropbox-sync`.
-
-### 3. Connect
-
-1. Settings → *Dropbox Vault Sync* → paste the **App key**.
-2. **Connect** (or **Connect with code** if returning to Obsidian does not work).
+1. Install the plugin. Until it is in the community plugin list, use
+   [BRAT](https://github.com/TfTHacker/obsidian42-brat): *BRAT → Add beta plugin* →
+   `vicmosin/obsidian-dropbox-sync`.
+2. Settings → *Synced Up* → **Connect**, sign in to Dropbox and press **Allow**.
+   If you are not returned to Obsidian automatically, use **Connect with code** and paste
+   the code Dropbox shows.
 3. **Dropbox folder**: the folder holding your vault, as it appears in Dropbox,
    e.g. `/Obsidian/Diary`.
 4. Run **Preview sync** once to check the plan, then **Sync now**.
+
+No Dropbox developer account or app registration is needed. Sign-in uses OAuth with
+PKCE, so the plugin contains no secret: the built-in app key only identifies the app,
+and access is granted solely by you on Dropbox's own page. You can revoke it any time at
+<https://www.dropbox.com/account/connected_apps>.
+
+### Using your own Dropbox app (optional)
+
+1. <https://www.dropbox.com/developers/apps> → **Create app** → **Scoped access** →
+   **Full Dropbox**.
+2. **Permissions**: enable `files.metadata.read`, `files.metadata.write`,
+   `files.content.read`, `files.content.write`, then **Submit**.
+3. **Settings → Redirect URIs**: add `obsidian://synced-up-auth`.
+4. Paste its **App key** into *Advanced → Custom Dropbox app key*.
 
 ## What is synced
 
@@ -82,6 +81,10 @@ The sync logic is independent of Obsidian:
 
 To release, bump `version` in `manifest.json`, `package.json` and `versions.json`,
 then push a tag with the same version. GitHub Actions builds the release that BRAT installs.
+
+## Disclaimer
+
+Synced Up is an independent project and is not affiliated with or endorsed by Dropbox, Inc.
 
 ## License
 
