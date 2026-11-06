@@ -1,5 +1,6 @@
 import { normalizePath as obsidianNormalize, type DataAdapter } from "obsidian";
 import { cleanSlashes as exact } from "../sync/paths";
+import { mapLimit } from "../sync/pool";
 import type { LocalFs, LocalStat } from "../sync/types";
 
 /**
@@ -16,11 +17,13 @@ export class ObsidianLocalFs implements LocalFs {
     const out: LocalStat[] = [];
     const walk = async (dir: string): Promise<void> => {
       const { files, folders } = await this.adapter.list(dir);
-      for (const f of files) {
-        if (this.skip(f)) continue;
-        const st = await this.adapter.stat(f);
-        if (st?.type === "file") out.push({ path: f, mtime: st.mtime, size: st.size });
-      }
+      // Each stat is a native call on mobile: run several at once.
+      const stats = await mapLimit(
+        files.filter((f) => !this.skip(f)),
+        8,
+        async (f) => [f, await this.adapter.stat(f)] as const,
+      );
+      for (const [f, st] of stats) if (st?.type === "file") out.push({ path: f, mtime: st.mtime, size: st.size });
       for (const d of folders) if (!this.skip(d)) await walk(d);
     };
     await walk("/");
@@ -47,6 +50,25 @@ export class ObsidianLocalFs implements LocalFs {
     if (!(await this.adapter.exists(p))) return;
     // Into the vault's .trash folder, never a hard delete.
     await this.adapter.trashLocal(p);
+    await this.removeEmptyParents(p);
+  }
+
+  /**
+   * Drop folders left empty by a deletion, so a folder deleted in Dropbox
+   * does not linger as an empty folder. Stops at the first non-empty one.
+   */
+  private async removeEmptyParents(path: string): Promise<void> {
+    let dir = path.slice(0, Math.max(0, path.lastIndexOf("/")));
+    while (dir) {
+      try {
+        const { files, folders } = await this.adapter.list(dir);
+        if (files.length || folders.length) return;
+        await this.adapter.rmdir(dir, false);
+      } catch {
+        return; // best effort: an empty folder is harmless
+      }
+      dir = dir.slice(0, Math.max(0, dir.lastIndexOf("/")));
+    }
   }
 
   async rename(from: string, to: string): Promise<void> {
