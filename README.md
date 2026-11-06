@@ -34,7 +34,7 @@ treated as a conflict, without changing anything. *Show sync log* shows what hap
 
 1. Install the plugin. Until it is in the community plugin list, use
    [BRAT](https://github.com/TfTHacker/obsidian42-brat): *BRAT → Add beta plugin* →
-   `vicmosin/obsidian-dropbox-sync`.
+   `vicmosin/obsidian-synced-up`.
 2. Settings → *Synced Up* → **Connect**, sign in to Dropbox and press **Allow**.
    If you are not returned to Obsidian automatically, use **Connect with code** and paste
    the code Dropbox shows.
