@@ -1,6 +1,6 @@
 {
   "name": "synced-up",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Reliable two-way Dropbox sync for Obsidian (built for iOS).",
   "main": "main.js",
   "type": "module",

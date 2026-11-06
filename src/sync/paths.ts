@@ -5,6 +5,12 @@
  * normalized and lower-cased. Dropbox is case-insensitive and macOS/iOS hand
  * out NFD-decomposed names (Cyrillic "й"/"ё", accented Latin), so comparing
  * raw strings produces phantom "new" files and duplicates.
+ *
+ * Obsidian also rewrites non-breaking spaces (U+00A0, U+202F) to plain
+ * spaces whenever it writes a file, so a Dropbox file named with them comes
+ * back from the vault under a slightly different name. Keys treat them as
+ * plain spaces too, or such files look deleted on one side and new on the
+ * other.
  */
 
 export function normalizePath(path: string): string {
@@ -16,7 +22,7 @@ export function normalizePath(path: string): string {
 }
 
 export function pathKey(path: string): string {
-  return normalizePath(path).toLowerCase();
+  return normalizePath(path).replace(/\u00A0|\u202F/g, " ").toLowerCase();
 }
 
 /** Join the remote root ("/Obsidian/Diary") with a vault-relative path. */

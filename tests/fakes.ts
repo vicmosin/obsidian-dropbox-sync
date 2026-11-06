@@ -129,9 +129,11 @@ export class FakeVault implements LocalFs {
     return f.data.slice(0);
   }
   async write(path: string, data: ArrayBuffer): Promise<LocalStat> {
+    // Like Obsidian's normalizePath: non-breaking spaces become plain spaces.
+    const p = obsidianLike(path);
     const f = { data: data.slice(0), mtime: ++this.clock };
-    this.files.set(path, f);
-    return { path, mtime: f.mtime, size: data.byteLength };
+    this.files.set(p, f);
+    return { path: p, mtime: f.mtime, size: data.byteLength };
   }
   async remove(path: string): Promise<void> {
     this.files.delete(path);
@@ -140,12 +142,16 @@ export class FakeVault implements LocalFs {
   async rename(from: string, to: string): Promise<void> {
     const f = this.files.get(from)!;
     this.files.delete(from);
-    this.files.set(to, f);
+    this.files.set(obsidianLike(to), f);
   }
   async stat(path: string): Promise<LocalStat | null> {
     const f = this.files.get(path);
     return f ? { path, mtime: f.mtime, size: f.data.byteLength } : null;
   }
+}
+
+export function obsidianLike(path: string): string {
+  return path.replace(/\u00A0|\u202F/g, " ");
 }
 
 export class MemoryStore implements StateStore {
