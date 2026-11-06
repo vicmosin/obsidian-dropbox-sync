@@ -1,0 +1,8 @@
+.is-syncing svg {
+  animation: dropbox-sync-spin 1s linear infinite;
+}
+@keyframes dropbox-sync-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

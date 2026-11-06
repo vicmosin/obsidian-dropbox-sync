@@ -2,7 +2,7 @@
   "id": "dropbox-vault-sync",
   "name": "Dropbox Vault Sync",
   "version": "0.1.0",
-  "minAppVersion": "1.4.0",
+  "minAppVersion": "1.5.0",
   "description": "Reliable two-way Dropbox sync with content hashing, incremental changes and safe conflict handling. Works on iOS.",
   "author": "vicmosin",
   "isDesktopOnly": false
