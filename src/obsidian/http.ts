@@ -11,11 +11,22 @@ export const obsidianHttp: HttpFn = async (req) => {
     contentType: req.contentType,
     throw: false,
   });
-  let text = "";
-  try {
-    text = r.text;
-  } catch {
-    /* binary body */
-  }
-  return { status: r.status, headers: r.headers, arrayBuffer: r.arrayBuffer, text };
+  let text: string | undefined;
+  return {
+    status: r.status,
+    headers: r.headers,
+    arrayBuffer: r.arrayBuffer,
+    // Decoding a large binary download as text wastes memory, so only do it
+    // for callers that read it (JSON replies and error messages).
+    get text(): string {
+      if (text === undefined) {
+        try {
+          text = r.text;
+        } catch {
+          text = "";
+        }
+      }
+      return text;
+    },
+  };
 };

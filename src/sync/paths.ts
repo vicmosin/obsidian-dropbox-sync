@@ -13,12 +13,24 @@
  * other.
  */
 
+/** Slash cleanup only (backslashes, repeats, leading/trailing); keeps every other character. */
+export function cleanSlashes(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/^\/|\/$/g, "");
+}
+
 export function normalizePath(path: string): string {
-  return path
-    .normalize("NFC")
-    .replace(/\\/g, "/")
-    .replace(/\/+/g, "/")
-    .replace(/^\/|\/$/g, "");
+  return cleanSlashes(path.normalize("NFC"));
+}
+
+/**
+ * Canonical form of the Dropbox folder setting: "" = not chosen yet,
+ * "/" = the Dropbox root, otherwise "/A/B" (leading slash, no trailing one).
+ */
+export function normalizeRoot(value: string): string {
+  const v = value.trim();
+  if (!v) return "";
+  const p = cleanSlashes(v);
+  return p ? `/${p}` : "/";
 }
 
 export function pathKey(path: string): string {
