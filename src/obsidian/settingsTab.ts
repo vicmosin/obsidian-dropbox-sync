@@ -190,5 +190,16 @@ export class SettingsTab extends PluginSettingTab {
           .setDisabled(!ready)
           .onClick(() => void this.plugin.sync("manual")),
       );
+
+    new Setting(containerEl)
+      .setName("Sync button in note header")
+      .setDesc("Adds a ↻ button next to the note's other buttons. “Sync with Dropbox” is also in each note's ⋯ menu.")
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.showHeaderButton).onChange(async (v) => {
+          this.plugin.settings.showHeaderButton = v;
+          await this.plugin.saveSettings();
+          this.plugin.refreshHeaderButtons();
+        }),
+      );
   }
 }

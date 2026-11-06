@@ -1,4 +1,4 @@
-import { debounce, Notice, Platform, Plugin, type ObsidianProtocolData } from "obsidian";
+import { debounce, ItemView, Notice, Platform, Plugin, type ObsidianProtocolData, type View } from "obsidian";
 import { AUTH_ACTION, authorizeUrl, createPkce, exchangeCode } from "./dropbox/auth";
 import { DropboxClient } from "./dropbox/client";
 import { obsidianHttp } from "./obsidian/http";
@@ -23,6 +23,8 @@ export default class SyncedUpPlugin extends Plugin {
   private logLines: string[] = [];
   private statusEl: HTMLElement | null = null;
   private ribbonEl: HTMLElement | null = null;
+  /** Sync buttons added to note headers, by view. */
+  private headerButtons = new Map<View, HTMLElement>();
   private intervalId: number | null = null;
   private pendingAuth: { verifier: string; redirect: boolean } | null = null;
   /** Prepared ahead of time: iOS only opens a browser synchronously from a tap. */
@@ -62,7 +64,23 @@ export default class SyncedUpPlugin extends Plugin {
     this.registerObsidianProtocolHandler(AUTH_ACTION, (p) => void this.finishAuth(p));
 
     // Automatic triggers. Each checks the mode itself, so switching modes needs no re-registration.
+    // Recent Obsidian mobile apps hide the ribbon, so also offer sync from each
+    // note's header and from its ⋯ menu.
+    this.registerEvent(this.app.workspace.on("layout-change", () => this.refreshHeaderButtons()));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.refreshHeaderButtons()));
+    this.registerEvent(
+      this.app.workspace.on("file-menu", (menu) => {
+        menu.addItem((item) =>
+          item
+            .setTitle("Sync with Dropbox")
+            .setIcon("refresh-cw")
+            .onClick(() => void this.sync("manual")),
+        );
+      }),
+    );
+
     this.app.workspace.onLayoutReady(() => {
+      this.refreshHeaderButtons();
       if (this.isAuto() && this.settings.syncOnStartup) void this.sync("auto");
     });
     this.registerDomEvent(document, "visibilitychange", () => {
@@ -79,7 +97,35 @@ export default class SyncedUpPlugin extends Plugin {
     this.applySchedule();
   }
 
+  /** Add or remove the header sync button on open notes to match settings. */
+  refreshHeaderButtons(): void {
+    const open = new Set<View>();
+    if (this.settings.showHeaderButton) {
+      this.app.workspace.iterateAllLeaves((leaf) => {
+        const view = leaf.view;
+        if (!(view instanceof ItemView) || view.getViewType() !== "markdown") return;
+        open.add(view);
+        if (this.headerButtons.has(view)) return;
+        const el = view.addAction("refresh-cw", "Sync with Dropbox", () => void this.sync("manual"));
+        el.addClass("synced-up-header-action");
+        if (this.engine?.isRunning) el.addClass("is-syncing");
+        this.headerButtons.set(view, el);
+      });
+    }
+    for (const [view, el] of this.headerButtons) {
+      if (open.has(view)) continue;
+      el.remove();
+      this.headerButtons.delete(view);
+    }
+  }
+
+  private setSpinning(on: boolean): void {
+    for (const el of [this.ribbonEl, ...this.headerButtons.values()]) el?.toggleClass("is-syncing", on);
+  }
+
   onunload(): void {
+    for (const el of this.headerButtons.values()) el.remove();
+    this.headerButtons.clear();
     if (this.intervalId !== null) window.clearInterval(this.intervalId);
     if (this.retryTimer !== null) window.clearTimeout(this.retryTimer);
   }
@@ -304,7 +350,7 @@ export default class SyncedUpPlugin extends Plugin {
       }
       this.lastAutoSync = Date.now();
     }
-    this.ribbonEl?.addClass("is-syncing");
+    this.setSpinning(true);
     if (trigger === "manual") this.showProgress("Syncing…");
     this.settingsTab?.refreshStatus();
     this.log(`--- ${trigger} sync started`);
@@ -318,7 +364,7 @@ export default class SyncedUpPlugin extends Plugin {
       if (trigger === "manual" || !isOffline(e)) new Notice(`Dropbox sync failed: ${errMsg(e)}`);
       return;
     } finally {
-      this.ribbonEl?.removeClass("is-syncing");
+      this.setSpinning(false);
       this.hideProgress();
       await this.flushLog();
     }
