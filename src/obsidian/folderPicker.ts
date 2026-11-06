@@ -55,41 +55,53 @@ export class FolderPickerModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
 
+    contentEl.createEl("p", {
+      text: "Tap a folder name to open it. Tap Select next to the folder that holds your vault.",
+      cls: "synced-up-muted",
+    });
     contentEl.createEl("div", { text: listing.path || "/ (Dropbox root)", cls: "synced-up-picker-path" });
     if (listing.isVault) {
-      contentEl.createEl("div", { text: "✓ This folder looks like an Obsidian vault", cls: "synced-up-picker-vault" });
+      contentEl.createEl("div", { text: "✓ You are inside an Obsidian vault", cls: "synced-up-picker-vault" });
     }
 
     const list = contentEl.createEl("div", { cls: "synced-up-picker-list" });
     if (listing.path) {
       const up = listing.path.slice(0, listing.path.lastIndexOf("/"));
-      this.row(list, "⬆  ..", () => void this.show(up));
+      this.row(list, "⬆  Back", () => void this.show(up), null);
     }
     if (listing.folders.length === 0) {
       list.createEl("div", { text: "No subfolders", cls: "synced-up-muted synced-up-picker-row" });
     }
-    for (const f of listing.folders) this.row(list, `📁  ${f.name}`, () => void this.show(f.path));
+    for (const f of listing.folders) {
+      this.row(list, `📁  ${f.name}`, () => void this.show(f.path), () => this.pick(f.path));
+    }
 
+    const name = listing.path ? listing.path.slice(listing.path.lastIndexOf("/") + 1) : "Dropbox root";
     new Setting(contentEl)
       .addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()))
-      .addButton((b) =>
-        b
-          .setButtonText(listing.path ? "Use this folder" : "Use Dropbox root")
-          .setCta()
-          .onClick(() => {
-            this.close();
-            this.onPick(listing.path);
-          }),
-      );
+      .addButton((b) => b.setButtonText(`Select “${name}”`).setCta().onClick(() => this.pick(listing.path)));
   }
 
-  private row(parent: HTMLElement, text: string, onClick: () => void): void {
-    const el = parent.createEl("div", { text, cls: "synced-up-picker-row" });
-    el.setAttr("role", "button");
-    el.setAttr("tabindex", "0");
-    el.addEventListener("click", onClick);
-    el.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") onClick();
+  private pick(path: string): void {
+    this.close();
+    this.onPick(path);
+  }
+
+  private row(parent: HTMLElement, text: string, onOpen: () => void, onSelect: (() => void) | null): void {
+    const el = parent.createEl("div", { cls: "synced-up-picker-row" });
+    const label = el.createEl("span", { text, cls: "synced-up-picker-name" });
+    label.setAttr("role", "button");
+    label.setAttr("tabindex", "0");
+    label.addEventListener("click", onOpen);
+    label.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") onOpen();
     });
+    if (onSelect) {
+      const btn = el.createEl("button", { text: "Select" });
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        onSelect();
+      });
+    }
   }
 }
