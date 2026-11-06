@@ -98,19 +98,39 @@ export class LogModal extends Modal {
   }
 }
 
-export class CodeModal extends Modal {
+/**
+ * Shown while signing in. The link is a real <a>, so tapping it opens the
+ * browser even where a programmatic window.open is blocked (iOS).
+ */
+export class AuthModal extends Modal {
   private code = "";
-  constructor(app: App, private readonly onSubmit: (code: string) => void) {
+  constructor(
+    app: App,
+    private readonly url: string,
+    /** null = redirect flow: Dropbox returns to Obsidian by itself. */
+    private readonly onSubmit: ((code: string) => void) | null,
+  ) {
     super(app);
   }
   onOpen(): void {
-    this.setTitle("Paste Dropbox code");
-    this.contentEl.createEl("p", { text: "After allowing access, Dropbox shows a code. Paste it here." });
-    new Setting(this.contentEl).setName("Code").addText((t) => t.onChange((v) => (this.code = v)));
-    new Setting(this.contentEl).addButton((b) =>
+    const { contentEl } = this;
+    this.setTitle("Connect to Dropbox");
+    contentEl.createEl("p", {
+      text: this.onSubmit
+        ? "Sign in to Dropbox and allow access. Dropbox then shows a code: copy it and paste it below."
+        : "Sign in to Dropbox and allow access. You will be returned to Obsidian automatically.",
+    });
+    const link = contentEl.createEl("a", { text: "Open Dropbox sign-in", href: this.url, cls: "mod-cta" });
+    link.setAttr("target", "_blank");
+    link.setAttr("rel", "noopener");
+    link.style.display = "inline-block";
+    link.style.margin = "0.5em 0 1em";
+    if (!this.onSubmit) return;
+    new Setting(contentEl).setName("Code").addText((t) => t.onChange((v) => (this.code = v)));
+    new Setting(contentEl).addButton((b) =>
       b.setButtonText("Connect").setCta().onClick(() => {
         this.close();
-        this.onSubmit(this.code);
+        this.onSubmit!(this.code);
       }),
     );
   }
