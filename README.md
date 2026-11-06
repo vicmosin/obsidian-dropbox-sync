@@ -47,8 +47,9 @@ treated as a conflict, without changing anything. *Show sync log* shows what hap
 2. Settings → *Synced Up* → **Connect**, sign in to Dropbox and press **Allow**.
    If you are not returned to Obsidian automatically, use **Connect with code** and paste
    the code Dropbox shows.
-3. **Dropbox folder**: the folder holding your vault, as it appears in Dropbox,
-   e.g. `/Obsidian/Diary`.
+3. **Dropbox folder**: tap **Choose…** and select the folder holding your vault (or
+   create a new one there). The plugin never creates the folder on its own, so a typo
+   cannot end up as a new folder with a copy of your vault.
 4. Run **Preview sync** once to check the plan, then **Sync now**.
 
 No Dropbox developer account or app registration is needed. Sign-in uses OAuth with
