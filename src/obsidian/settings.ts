@@ -27,6 +27,10 @@ export interface Settings {
   tokens: Tokens | null;
   accountName: string;
   lastSync: number;
+  /** Human-readable outcome of the last sync, shown in settings. */
+  lastSyncSummary: string;
+  /** Sync button in each note's header (the ribbon is hidden on recent mobile apps). */
+  showHeaderButton: boolean;
 }
 
 function defaultDeviceLabel(): string {
@@ -49,4 +53,6 @@ export const DEFAULT_SETTINGS: Settings = {
   tokens: null,
   accountName: "",
   lastSync: 0,
+  lastSyncSummary: "",
+  showHeaderButton: true,
 };

@@ -1,4 +1,4 @@
-import { debounce, Notice, Platform, Plugin, type ObsidianProtocolData } from "obsidian";
+import { debounce, ItemView, Notice, Platform, Plugin, type ObsidianProtocolData, type View } from "obsidian";
 import { AUTH_ACTION, authorizeUrl, createPkce, exchangeCode } from "./dropbox/auth";
 import { DropboxClient } from "./dropbox/client";
 import { obsidianHttp } from "./obsidian/http";
@@ -23,6 +23,8 @@ export default class SyncedUpPlugin extends Plugin {
   private logLines: string[] = [];
   private statusEl: HTMLElement | null = null;
   private ribbonEl: HTMLElement | null = null;
+  /** Sync buttons added to note headers, by view. */
+  private headerButtons = new Map<View, HTMLElement>();
   private intervalId: number | null = null;
   private pendingAuth: { verifier: string; redirect: boolean } | null = null;
   /** Prepared ahead of time: iOS only opens a browser synchronously from a tap. */
@@ -62,7 +64,23 @@ export default class SyncedUpPlugin extends Plugin {
     this.registerObsidianProtocolHandler(AUTH_ACTION, (p) => void this.finishAuth(p));
 
     // Automatic triggers. Each checks the mode itself, so switching modes needs no re-registration.
+    // Recent Obsidian mobile apps hide the ribbon, so also offer sync from each
+    // note's header and from its ⋯ menu.
+    this.registerEvent(this.app.workspace.on("layout-change", () => this.refreshHeaderButtons()));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.refreshHeaderButtons()));
+    this.registerEvent(
+      this.app.workspace.on("file-menu", (menu) => {
+        menu.addItem((item) =>
+          item
+            .setTitle("Sync with Dropbox")
+            .setIcon("refresh-cw")
+            .onClick(() => void this.sync("manual")),
+        );
+      }),
+    );
+
     this.app.workspace.onLayoutReady(() => {
+      this.refreshHeaderButtons();
       if (this.isAuto() && this.settings.syncOnStartup) void this.sync("auto");
     });
     this.registerDomEvent(document, "visibilitychange", () => {
@@ -79,7 +97,35 @@ export default class SyncedUpPlugin extends Plugin {
     this.applySchedule();
   }
 
+  /** Add or remove the header sync button on open notes to match settings. */
+  refreshHeaderButtons(): void {
+    const open = new Set<View>();
+    if (this.settings.showHeaderButton) {
+      this.app.workspace.iterateAllLeaves((leaf) => {
+        const view = leaf.view;
+        if (!(view instanceof ItemView) || view.getViewType() !== "markdown") return;
+        open.add(view);
+        if (this.headerButtons.has(view)) return;
+        const el = view.addAction("refresh-cw", "Sync with Dropbox", () => void this.sync("manual"));
+        el.addClass("synced-up-header-action");
+        if (this.engine?.isRunning) el.addClass("is-syncing");
+        this.headerButtons.set(view, el);
+      });
+    }
+    for (const [view, el] of this.headerButtons) {
+      if (open.has(view)) continue;
+      el.remove();
+      this.headerButtons.delete(view);
+    }
+  }
+
+  private setSpinning(on: boolean): void {
+    for (const el of [this.ribbonEl, ...this.headerButtons.values()]) el?.toggleClass("is-syncing", on);
+  }
+
   onunload(): void {
+    for (const el of this.headerButtons.values()) el.remove();
+    this.headerButtons.clear();
     if (this.intervalId !== null) window.clearInterval(this.intervalId);
     if (this.retryTimer !== null) window.clearTimeout(this.retryTimer);
   }
@@ -183,8 +229,8 @@ export default class SyncedUpPlugin extends Plugin {
           return;
         }
         this.settingsTab?.display();
-        this.log(`Dropbox folder set to ${path || "/"}`);
-        new Notice(`Dropbox folder: ${path || "/"}. Checking what needs to sync…`);
+        this.log(`Dropbox folder set to ${path}`);
+        new Notice(`Dropbox folder: ${path}. Checking what needs to sync…`);
         // Show the plan right away, so it is clear what happens next.
         await this.preview();
       })();
@@ -193,7 +239,9 @@ export default class SyncedUpPlugin extends Plugin {
 
   /** Changing the folder invalidates everything we know about the remote side. */
   async setRemoteRoot(value: string): Promise<void> {
-    let next = value.trim().replace(/\/+$/, "");
+    const trimmed = value.trim();
+    // "/" is an explicit choice of the Dropbox root; "" means not chosen yet.
+    let next = trimmed === "/" ? "/" : trimmed.replace(/\/+$/, "");
     if (next && !next.startsWith("/")) next = `/${next}`;
     if (next === this.settings.remoteRoot) return;
     this.settings.remoteRoot = next;
@@ -255,6 +303,11 @@ export default class SyncedUpPlugin extends Plugin {
       if (trigger === "manual") new Notice("Connect to Dropbox in the plugin settings first.");
       return false;
     }
+    if (!this.settings.remoteRoot) {
+      // An empty folder would mean "the whole Dropbox": never do that by accident.
+      if (trigger === "manual") new Notice("Choose the Dropbox folder in the plugin settings first.");
+      return false;
+    }
     return true;
   }
 
@@ -297,8 +350,9 @@ export default class SyncedUpPlugin extends Plugin {
       }
       this.lastAutoSync = Date.now();
     }
-    this.ribbonEl?.addClass("is-syncing");
+    this.setSpinning(true);
     if (trigger === "manual") this.showProgress("Syncing…");
+    this.settingsTab?.refreshStatus();
     this.log(`--- ${trigger} sync started`);
     let result: SyncResult;
     try {
@@ -306,10 +360,11 @@ export default class SyncedUpPlugin extends Plugin {
     } catch (e) {
       this.log(`Sync failed: ${errMsg(e)}`);
       this.setStatus("Dropbox: failed");
+      this.recordOutcome(`failed: ${errMsg(e)}`, false);
       if (trigger === "manual" || !isOffline(e)) new Notice(`Dropbox sync failed: ${errMsg(e)}`);
       return;
     } finally {
-      this.ribbonEl?.removeClass("is-syncing");
+      this.setSpinning(false);
       this.hideProgress();
       await this.flushLog();
     }
@@ -319,6 +374,7 @@ export default class SyncedUpPlugin extends Plugin {
   private report(trigger: Trigger, r: SyncResult): void {
     if (r.aborted) {
       this.log(`Aborted: ${r.aborted}`);
+      this.recordOutcome("paused, waiting for your confirmation", false);
       this.setStatus("Dropbox: waiting for confirmation");
       new ConfirmModal(
         this.app,
@@ -330,8 +386,6 @@ export default class SyncedUpPlugin extends Plugin {
       ).open();
       return;
     }
-    this.settings.lastSync = Date.now();
-    void this.saveData(this.settings);
     const s = r.summary;
     const parts = [
       s.pull && `${s.pull}↓`,
@@ -342,6 +396,7 @@ export default class SyncedUpPlugin extends Plugin {
     const text = parts.length ? parts.join(", ") : "up to date";
     this.setStatus(`Dropbox: ${r.errors.length ? `${r.errors.length} errors` : text}`);
     this.log(`Done: ${text}; errors ${r.errors.length}, deferred ${r.deferred.length}`);
+    this.recordOutcome(r.errors.length ? `${text}; ${r.errors.length} file(s) failed` : text, true);
 
     if (r.errors.length) {
       new Notice(`Dropbox: ${r.errors.length} file(s) failed. See “Show sync log”.\n${r.errors[0]!.path}: ${r.errors[0]!.message}`, 10_000);
@@ -350,6 +405,21 @@ export default class SyncedUpPlugin extends Plugin {
     } else if (trigger === "manual") {
       new Notice(`Dropbox: ${text}`);
     }
+  }
+
+  /** One line for the settings screen: when we last synced and how it went. */
+  statusLine(): string {
+    if (this.engine?.isRunning) return "Syncing now…";
+    const s = this.settings;
+    if (!s.lastSync) return "Not synced yet.";
+    return `Last sync ${timeAgo(s.lastSync)}: ${s.lastSyncSummary || "done"}.`;
+  }
+
+  private recordOutcome(summary: string, completed: boolean): void {
+    if (completed) this.settings.lastSync = Date.now();
+    this.settings.lastSyncSummary = summary;
+    void this.saveData(this.settings);
+    this.settingsTab?.refreshStatus();
   }
 
   // ---- log / status -----------------------------------------------------

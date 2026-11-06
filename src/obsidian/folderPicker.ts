@@ -79,7 +79,7 @@ export class FolderPickerModal extends Modal {
     const name = listing.path ? listing.path.slice(listing.path.lastIndexOf("/") + 1) : "Dropbox root";
     new Setting(contentEl)
       .addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()))
-      .addButton((b) => b.setButtonText(`Select “${name}”`).setCta().onClick(() => this.pick(listing.path)));
+      .addButton((b) => b.setButtonText(`Select “${name}”`).setCta().onClick(() => this.pick(listing.path || "/")));
   }
 
   private pick(path: string): void {

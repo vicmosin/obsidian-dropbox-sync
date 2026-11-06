@@ -2,6 +2,8 @@ import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type SyncedUpPlugin from "../main";
 
 export class SettingsTab extends PluginSettingTab {
+  private statusEl: HTMLElement | null = null;
+
   constructor(app: App, private readonly plugin: SyncedUpPlugin) {
     super(app, plugin);
   }
@@ -29,6 +31,8 @@ export class SettingsTab extends PluginSettingTab {
         .addButton((b) => b.setButtonText("Connect").setCta().onClick(() => this.plugin.startAuth(true)))
         .addButton((b) => b.setButtonText("Connect with code").onClick(() => this.plugin.startAuth(false)));
     }
+
+    this.renderSyncSection(connected && !!s.remoteRoot);
 
     new Setting(containerEl)
       .setName("Dropbox folder")
@@ -153,6 +157,48 @@ export class SettingsTab extends PluginSettingTab {
           s.appKey = next;
           if (s.tokens) await this.plugin.disconnect();
           else await this.plugin.saveSettings();
+        }),
+      );
+  }
+
+  /** Updates just the status line, so a sync finishing never re-renders inputs. */
+  refreshStatus(): void {
+    this.statusEl?.setText(this.plugin.statusLine());
+  }
+
+  private renderSyncSection(ready: boolean): void {
+    const { containerEl } = this;
+    const sync = new Setting(containerEl).setName("Sync");
+    this.statusEl = sync.descEl;
+    this.refreshStatus();
+    if (!ready) {
+      sync.setDesc(this.plugin.settings.tokens ? "Choose the Dropbox folder below first." : "Connect to Dropbox first.");
+      this.statusEl = null;
+    }
+    sync
+      .addButton((b) =>
+        b
+          .setButtonText("Preview")
+          .setTooltip("Show what would be downloaded, uploaded or deleted, without changing anything")
+          .setDisabled(!ready)
+          .onClick(() => void this.plugin.preview()),
+      )
+      .addButton((b) =>
+        b
+          .setButtonText("Sync now")
+          .setCta()
+          .setDisabled(!ready)
+          .onClick(() => void this.plugin.sync("manual")),
+      );
+
+    new Setting(containerEl)
+      .setName("Sync button in note header")
+      .setDesc("Adds a ↻ button next to the note's other buttons. “Sync with Dropbox” is also in each note's ⋯ menu.")
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.showHeaderButton).onChange(async (v) => {
+          this.plugin.settings.showHeaderButton = v;
+          await this.plugin.saveSettings();
+          this.plugin.refreshHeaderButtons();
         }),
       );
   }
